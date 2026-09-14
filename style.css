@@ -1,6 +1,13 @@
 /* Design language modeled on sleepcalculator.com:
    dark night-sky gradient, Nunito, soft yellow accent, dark rounded cards. */
 
+:root {
+  /* Text tiers, tuned for AA contrast on the dark navy background */
+  --text-muted: #a2aad6; /* secondary text */
+  --text-faint: #8c93be; /* footnotes, tertiary text */
+  --text-dim: #7a82b0; /* inactive picker items, decorative borders */
+}
+
 html {
   box-sizing: border-box;
   height: 100%;
@@ -92,7 +99,7 @@ select {
 }
 
 .route-arrow {
-  color: #545973;
+  color: var(--text-muted);
   padding-bottom: 0.9em;
   flex-shrink: 0;
 }
@@ -110,7 +117,7 @@ select {
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: #545973;
+  color: var(--text-muted);
   padding-left: 0.8em;
 }
 
@@ -127,7 +134,7 @@ select {
   appearance: none;
   cursor: pointer;
   outline: none;
-  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23545973' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238c93be' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 0.7em center;
   text-overflow: ellipsis;
@@ -226,7 +233,7 @@ select:focus-visible {
   text-align: center;
   font-size: 1.125em;
   font-weight: 600;
-  color: #545973;
+  color: var(--text-dim);
   transition: color 0.15s;
   pointer-events: auto;
 }
@@ -239,7 +246,7 @@ select:focus-visible {
 
 .now-line {
   text-align: center;
-  color: #545973;
+  color: var(--text-muted);
   font-size: 0.95em;
   margin-bottom: 1.4em;
 }
@@ -294,7 +301,7 @@ select:focus-visible {
 .button_ghost {
   margin-top: 1.75em;
   background-color: transparent;
-  border: 1px solid #545973;
+  border: 1px solid var(--text-dim);
   color: #fff;
   width: 13em;
 }
@@ -329,7 +336,7 @@ select:focus-visible {
 }
 
 .time-view__text {
-  color: #545973;
+  color: var(--text-muted);
   font-size: 1em;
 }
 
@@ -368,7 +375,7 @@ select:focus-visible {
   width: 0.7em;
   height: 0.7em;
   border-radius: 50%;
-  background-color: var(--c, #545973);
+  background-color: var(--c, var(--text-dim));
   flex-shrink: 0;
 }
 
@@ -395,7 +402,7 @@ select:focus-visible {
 }
 
 .dep-station {
-  color: #545973;
+  color: var(--text-muted);
   font-size: 0.85em;
   white-space: nowrap;
 }
@@ -411,7 +418,7 @@ select:focus-visible {
   display: flex;
   align-items: center;
   gap: 0.5em;
-  color: #545973;
+  color: var(--text-muted);
   font-size: 0.85em;
   width: 100%;
 }
@@ -429,7 +436,7 @@ select:focus-visible {
 
 .time-list__transfer {
   font-size: 0.72em;
-  color: #545973;
+  color: var(--text-muted);
   padding-left: 1.2em;
 }
 
@@ -450,7 +457,7 @@ select:focus-visible {
   width: 100%;
   text-align: right;
   font-size: 0.8em;
-  color: #545973;
+  color: var(--text-muted);
 }
 
 .offset b {
@@ -463,13 +470,13 @@ select:focus-visible {
 .footer {
   margin-top: 3em;
   text-align: center;
-  color: #545973;
+  color: var(--text-faint);
   font-size: 0.8em;
   line-height: 1.6;
 }
 
 .footer__source a {
-  color: #545973;
+  color: var(--text-faint);
 }
 
 @media (max-width: 480px) {
