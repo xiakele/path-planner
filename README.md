@@ -9,8 +9,9 @@ origin and how far away each departure is from right now.
 
 ## Highlights
 
-- **Arrive-by search** — the three closest usable journeys ranked by arrival,
-  each attributed to a specific first train.
+- **Arrive-by search** — the three latest catchable departures ranked by
+  departure time (dominated options pruned), each attributed to a specific
+  first train.
 - **Transfer connections** — up to 2 transfers with a 3-minute minimum
   connection time, e.g. Journal Square → Newport → Hoboken.
 - **Next-occurrence time logic** — if the entered time has already passed, the

@@ -107,7 +107,7 @@ export function findJourneys(schedule, from, to, enteredMinutes, mNow) {
   tomorrow.setDate(today.getDate() + 1);
   const allTrips = [...collectTrips(schedule, today, 0), ...collectTrips(schedule, tomorrow, 1440)];
 
-  const seen = new Map(); // arrival minute -> journey (dedupe, keep the simplest)
+  const seen = new Map(); // departure minute -> journey (dedupe, keep the simplest)
 
   for (const trip of allTrips) {
     const i = trip.stops.indexOf(from);
@@ -147,24 +147,41 @@ export function findJourneys(schedule, from, to, enteredMinutes, mNow) {
       departed,
     };
 
-    // Multiple routings can land on the same arrival minute; keep the one
-    // with the fewest legs (then the latest departure) so the three results
-    // read as distinct, sleep-calculator-style alternatives
-    const key = journey.arrAbs;
+    // Different first trains can produce the same routing; per departure
+    // minute keep the journey with the fewest legs (then the earliest
+    // arrival) so the results read as distinct alternatives
+    const key = journey.depAbs;
     const prev = seen.get(key);
     if (
       !prev ||
       journey.legs.length < prev.legs.length ||
-      (journey.legs.length === prev.legs.length && journey.depAbs > prev.depAbs)
+      (journey.legs.length === prev.legs.length && journey.arrAbs < prev.arrAbs)
     ) {
       seen.set(key, journey);
     }
   }
 
-  // Latest-arriving journeys first — the closest usable options to the target
-  const result = [...seen.values()];
+  // Drop journeys dominated by another one (a departure that is later or
+  // equal, arriving earlier or equal, with no more legs — i.e. strictly
+  // better on some axis and worse on none); dominated options only waste a
+  // backup slot
+  const all = [...seen.values()];
+  const result = all.filter((a) => {
+    return !all.some(
+      (b) =>
+        b !== a &&
+        b.depAbs >= a.depAbs &&
+        b.arrAbs <= a.arrAbs &&
+        b.legs.length <= a.legs.length &&
+        (b.depAbs > a.depAbs || b.arrAbs < a.arrAbs || b.legs.length < a.legs.length),
+    );
+  });
+
+  // Latest catchable departure first — "which train should I catch" reads
+  // naturally, and on ties prefer the faster journey (earlier arrival, then
+  // fewer legs)
   result.sort(
-    (a, b) => b.arrAbs - a.arrAbs || a.legs.length - b.legs.length || b.depAbs - a.depAbs,
+    (a, b) => b.depAbs - a.depAbs || a.arrAbs - b.arrAbs || a.legs.length - b.legs.length,
   );
   return result.slice(0, 3);
 }
