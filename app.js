@@ -1,5 +1,8 @@
 // PATH Planner — find trains that arrive at a chosen station by a chosen time.
 // Schedule data comes from data/schedule.json (refresh with pnpm update:schedule).
+// Journey search lives in search.js.
+
+import { findJourneys } from "./search.js";
 
 const STATIONS = {
   NWK: "Newark",
@@ -74,13 +77,6 @@ function nowMinutes() {
   return d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60;
 }
 
-function dayKeyFor(date) {
-  const dow = date.getDay();
-  if (dow === 6) return "saturday";
-  if (dow === 0) return "sunday";
-  return "weekday";
-}
-
 // "12" -> 0, "1".."11" -> 1..11; plus meridiem offset
 function pickedMinutes() {
   const hour = parseInt(pickerState.hour, 10);
@@ -91,19 +87,6 @@ function pickedMinutes() {
 
 // ---------- route selects ----------
 
-function reachableToStations(from) {
-  const tos = new Set();
-  for (const lines of Object.values(schedule.days)) {
-    for (const line of lines) {
-      const i = line.stops.indexOf(from);
-      if (i >= 0) {
-        for (const stop of line.stops.slice(i + 1)) tos.add(stop);
-      }
-    }
-  }
-  return tos;
-}
-
 function fillFromSelect() {
   for (const code of STATION_ORDER) {
     fromSelect.add(new Option(STATIONS[code], code));
@@ -113,17 +96,20 @@ function fillFromSelect() {
 
 function fillToSelect() {
   const from = fromSelect.value;
-  const reachable = reachableToStations(from);
+  const previous = toSelect.value;
   toSelect.options.length = 0;
+  // Every station is reachable from every other via transfers, so list them all
   for (const code of STATION_ORDER) {
-    if (code !== from && reachable.has(code)) {
+    if (code !== from) {
       toSelect.add(new Option(STATIONS[code], code));
     }
   }
-  if (![...toSelect.options].some((o) => o.value === "09S")) {
-    toSelect.value = toSelect.options[0]?.value ?? "";
+  // Keep the user's destination across "From" changes; only a From/To
+  // collision needs a reset
+  if (previous && previous !== from) {
+    toSelect.value = previous;
   } else {
-    toSelect.value = "09S";
+    toSelect.value = "09S" === from ? (toSelect.options[0]?.value ?? "") : "09S";
   }
   destLabel.textContent = STATIONS[toSelect.value] ?? toSelect.value;
 }
@@ -179,66 +165,9 @@ function initPicker() {
 
 // ---------- schedule lookup ----------
 
-// Returns up to 3 candidates: the latest trips departing from `from` that
-// arrive at `to` no later than the entered time (interpreted as the next
-// occurrence). Two sources are searched:
-//   - tonight's remaining service (today's table, departures still ahead),
-//     plus recently departed trains as "missed" context;
-//   - tomorrow's table, which also covers departures after tonight's midnight
-//     (PATH tables are per calendar day, e.g. Saturday 00:10 runs Friday night).
-function findTrains(from, to, enteredMinutes, mNow = nowMinutes()) {
-  const GRACE = 1;
-  const target = enteredMinutes < mNow ? enteredMinutes + 1440 : enteredMinutes;
-
-  const today = new Date();
-  const tomorrow = new Date(today);
-  tomorrow.setDate(today.getDate() + 1);
-
-  const candidates = [];
-
-  // Collect every usable trip of `lines`, shifting the table's clock times by
-  // `base` minutes into absolute time (0 = today, 1440 = tomorrow).
-  const consider = (lines, base, { departed = false, futureOnly = false } = {}) => {
-    for (const line of lines) {
-      const i = line.stops.indexOf(from);
-      const j = line.stops.indexOf(to);
-      if (i < 0 || j < 0 || i >= j) continue;
-
-      for (const trip of line.trips) {
-        const dep = trip[i];
-        const arr = trip[j];
-        if (dep === null || arr === null) continue;
-
-        const depMin = parseInt(dep.slice(0, 2), 10) * 60 + parseInt(dep.slice(3), 10);
-        const arrMin = parseInt(arr.slice(0, 2), 10) * 60 + parseInt(arr.slice(3), 10);
-        // Arrival earlier on the clock means the trip crosses midnight
-        const arrAdj = arrMin < depMin ? arrMin + 1440 : arrMin;
-
-        if (futureOnly && depMin < mNow - GRACE) continue;
-
-        const depAbs = base + depMin;
-        const arrAbs = base + arrAdj;
-
-        if (arrAbs <= target) {
-          candidates.push({ line, depAbs, arrAbs, departed });
-        }
-      }
-    }
-  };
-
-  // Tonight: today's table, departures still ahead of "now"
-  consider(schedule.days[dayKeyFor(today)] ?? [], 0, { futureOnly: true });
-  // Tonight's already-departed trains — context only while the target is still today
-  if (target <= 1440) {
-    consider(schedule.days[dayKeyFor(today)] ?? [], 0, { departed: true });
-  }
-  // Tomorrow's table (also serves departures after midnight tonight)
-  consider(schedule.days[dayKeyFor(tomorrow)] ?? [], 1440);
-
-  // Latest-arriving trains first — the closest usable options to the target
-  candidates.sort((a, b) => b.arrAbs - a.arrAbs);
-  return candidates.slice(0, 3);
-}
+// Delegates to search.js (transfer-aware journey search). Journeys carry
+// legs: [{line, board:{stop,time}, alight:{stop,time}}], plus depAbs / arrAbs
+// (absolute minutes) and a `departed` flag for missed-context options.
 
 function offsetText(depAbs, mNow) {
   const diff = Math.round(depAbs - mNow);
@@ -253,7 +182,7 @@ function offsetText(depAbs, mNow) {
 // ---------- rendering ----------
 
 function renderResults(from, to, targetMinutes) {
-  const trains = findTrains(from, to, targetMinutes);
+  const journeys = findJourneys(schedule, from, to, targetMinutes, nowMinutes());
   const dayLabel = new Date().toLocaleDateString("en-US", { weekday: "long" });
 
   resultsTitle.innerHTML = `If you want to arrive at <span class="accent">${STATIONS[to]}</span> by ${fmtTime(targetMinutes)}…`;
@@ -263,8 +192,8 @@ function renderResults(from, to, targetMinutes) {
   resultsError.hidden = true;
   resultList.hidden = false;
 
-  if (trains.length === 0) {
-    resultsSubtitle.textContent = `There is no direct train from ${STATIONS[from]} that arrives by ${fmtTime(targetMinutes)}.`;
+  if (journeys.length === 0) {
+    resultsSubtitle.textContent = `Even with transfers, no connection from ${STATIONS[from]} arrives by ${fmtTime(targetMinutes)}.`;
     resultsError.hidden = false;
     resultsError.textContent =
       "Try an earlier arrival time — or an earlier train leaves you time to spare.";
@@ -272,9 +201,12 @@ function renderResults(from, to, targetMinutes) {
   }
 
   const mNow = nowMinutes();
-  const suggestedIdx = trains.findIndex((t) => !t.departed);
-  trains.forEach((train, idx) => {
-    const { line, depAbs, arrAbs, departed } = train;
+  const suggestedIdx = journeys.findIndex((j) => !j.departed);
+  if (suggestedIdx === -1) {
+    resultsSubtitle.textContent = `No catchable train — these are the latest ones that would have arrived in time:`;
+  }
+  journeys.forEach((journey, idx) => {
+    const { legs, depAbs, arrAbs, departed } = journey;
     const item = document.createElement("div");
     item.className =
       "time-list__item" +
@@ -289,10 +221,21 @@ function renderResults(from, to, targetMinutes) {
         <span class="dep-station">from ${STATIONS[from]}${when}</span>
         ${idx === suggestedIdx ? "<span class='tag'>suggested</span>" : ""}
       </div>
-      <div class="time-list__meta">
-        <span class="line-chip" style="--c:${line.color}"></span>
-        <span class="line-name">${line.name}</span>
-        <span class="arrival">arrives <b>${fmtTime(arrAbs)}</b> at ${STATIONS[to]}</span>
+      <div class="time-list__legs">
+        ${legs
+          .map((leg, li) => {
+            const legRow = `
+          <div class="time-list__leg">
+            <span class="line-chip" style="--c:${leg.line.color}"></span>
+            <span class="line-name">${leg.line.name}</span>
+            <span class="leg-times"><b>${fmtTime(leg.board.time)}</b> ${STATIONS[leg.board.stop]} → <b>${fmtTime(leg.alight.time)}</b> ${STATIONS[leg.alight.stop]}</span>
+          </div>`;
+            if (li === legs.length - 1) return legRow;
+            const wait = legs[li + 1].board.time - leg.alight.time;
+            return `${legRow}
+          <div class="time-list__transfer">transfer at ${STATIONS[leg.alight.stop]} · wait ${wait} min</div>`;
+          })
+          .join("")}
       </div>
       <div class="offset">${departed ? "" : "departs "}${offsetText(depAbs, mNow)}</div>
     `;

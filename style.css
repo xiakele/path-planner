@@ -361,6 +361,22 @@ select:focus-visible {
   opacity: 0.55;
 }
 
+.line-chip {
+  width: 0.7em;
+  height: 0.7em;
+  border-radius: 50%;
+  background-color: var(--c, #545973);
+  flex-shrink: 0;
+}
+
+.line-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 0;
+  max-width: 45%;
+}
+
 .time-list__main {
   display: flex;
   align-items: baseline;
@@ -381,7 +397,14 @@ select:focus-visible {
   white-space: nowrap;
 }
 
-.time-list__meta {
+.time-list__legs {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3em;
+  width: 100%;
+}
+
+.time-list__leg {
   display: flex;
   align-items: center;
   gap: 0.5em;
@@ -390,27 +413,25 @@ select:focus-visible {
   width: 100%;
 }
 
-.line-chip {
-  width: 0.7em;
-  height: 0.7em;
-  border-radius: 50%;
-  background-color: var(--c, #545973);
-  flex-shrink: 0;
-}
-
-.line-name {
+.leg-times {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.arrival {
-  white-space: nowrap;
-}
-
-.arrival b {
+.leg-times b {
   color: #fff;
   font-weight: 600;
+}
+
+.time-list__transfer {
+  font-size: 0.72em;
+  color: #545973;
+  padding-left: 1.2em;
+}
+
+.time-list__transfer::before {
+  content: "↳ ";
 }
 
 .tag {
@@ -469,6 +490,18 @@ select:focus-visible {
 
   .tag {
     margin-left: 0;
+  }
+
+  .time-list__leg {
+    flex-wrap: wrap;
+  }
+
+  .line-name {
+    max-width: 100%;
+  }
+
+  .leg-times {
+    white-space: normal;
   }
 
   .route-picker {
