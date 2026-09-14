@@ -546,8 +546,19 @@ select:focus-visible {
     align-items: stretch;
   }
 
+  /* Stacked layout: keep the swap button between the selects, rotated to
+     point downward (From on top, To below) */
   .swap-btn {
-    display: none;
+    display: flex;
+    align-self: center;
+  }
+
+  .swap-btn svg {
+    transform: rotate(90deg);
+  }
+
+  .swap-btn:active svg {
+    transform: rotate(270deg);
   }
 
   .select-wrap_route {
