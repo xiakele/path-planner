@@ -51,18 +51,24 @@
               <label class="select-label" for="fromSelect">From</label>
               <select id="fromSelect"></select>
             </div>
-            <div class="route-arrow" aria-hidden="true">
-              <svg viewBox="0 0 24 12" width="24" height="12">
+            <button
+              class="swap-btn"
+              id="swapBtn"
+              type="button"
+              aria-label="Swap from and to"
+              title="Swap"
+            >
+              <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
                 <path
-                  d="M1 6h20m-4-4l4 4-4 4"
+                  d="M4 8h15m-4-4l4 4-4 4M20 16H5m4-4l-4 4 4 4"
                   fill="none"
                   stroke="currentColor"
-                  stroke-width="1.6"
+                  stroke-width="1.8"
                   stroke-linecap="round"
                   stroke-linejoin="round"
                 />
               </svg>
-            </div>
+            </button>
             <div class="select-wrap select-wrap_route">
               <label class="select-label" for="toSelect">To</label>
               <select id="toSelect"></select>

@@ -43,6 +43,7 @@ let schedule = null;
 
 const fromSelect = document.getElementById("fromSelect");
 const toSelect = document.getElementById("toSelect");
+const swapBtn = document.getElementById("swapBtn");
 const destLabel = document.getElementById("destLabel");
 const timePicker = document.getElementById("timePicker");
 const nowTime = document.getElementById("nowTime");
@@ -280,6 +281,13 @@ async function boot() {
   });
   toSelect.addEventListener("change", () => {
     destLabel.textContent = STATIONS[toSelect.value];
+  });
+  swapBtn.addEventListener("click", () => {
+    const previousFrom = fromSelect.value;
+    fromSelect.value = toSelect.value;
+    fromSelect.dispatchEvent(new Event("change"));
+    toSelect.value = previousFrom;
+    toSelect.dispatchEvent(new Event("change"));
   });
 
   initPicker();

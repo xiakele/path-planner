@@ -98,10 +98,37 @@ select {
   margin-bottom: 1.5em;
 }
 
-.route-arrow {
-  color: var(--text-muted);
-  padding-bottom: 0.9em;
+.swap-btn {
+  align-self: flex-end;
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.6em;
+  height: 2.6em;
+  color: var(--text-muted);
+  background: none;
+  border: 1px solid var(--text-dim);
+  border-radius: 50%;
+  cursor: pointer;
+  outline: none;
+  transition:
+    border-color 0.2s,
+    color 0.2s;
+}
+
+.swap-btn:hover,
+.swap-btn:focus-visible {
+  color: #f5d67b;
+  border-color: #f5d67b;
+}
+
+.swap-btn:active svg {
+  transform: rotate(180deg);
+}
+
+.swap-btn svg {
+  transition: transform 0.3s ease;
 }
 
 .select-wrap_route {
@@ -519,7 +546,7 @@ select:focus-visible {
     align-items: stretch;
   }
 
-  .route-arrow {
+  .swap-btn {
     display: none;
   }
 
