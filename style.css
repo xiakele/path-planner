@@ -87,7 +87,8 @@ select {
   align-items: flex-end;
   justify-content: center;
   gap: 0.6em;
-  margin-bottom: 1.4em;
+  padding: 0.3em 0 0.4em;
+  margin-bottom: 1.5em;
 }
 
 .route-arrow {
@@ -99,7 +100,7 @@ select {
 .select-wrap_route {
   display: flex;
   flex-direction: column;
-  gap: 0.35em;
+  gap: 0.45em;
   min-width: 0;
   flex: 1;
 }
@@ -193,7 +194,9 @@ select:focus-visible {
   box-shadow: inset 0px 5px 8px -3px rgba(3, 6, 23, 0.3);
 }
 
-.select-wrap {
+/* drum columns (scoped to the time picker — the route selects reuse the
+   select-wrap class but must not get the drum's scroll + fade mask) */
+.time-picker .select-wrap {
   position: relative;
   flex: 1;
   height: 100%;
@@ -207,7 +210,7 @@ select:focus-visible {
   mask-image: linear-gradient(to bottom, transparent, #000 22%, #000 78%, transparent);
 }
 
-.select-wrap::-webkit-scrollbar {
+.time-picker .select-wrap::-webkit-scrollbar {
   display: none;
 }
 
