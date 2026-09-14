@@ -120,7 +120,7 @@ function parseTable(html, lineName) {
 }
 
 async function fetchJson(url) {
-  const res = await fetch(url, { headers: { "User-Agent": "path-web schedule updater" } });
+  const res = await fetch(url, { headers: { "User-Agent": "path-planner schedule updater" } });
   if (!res.ok) throw new Error(`GET ${url} -> HTTP ${res.status}`);
   return res.json();
 }

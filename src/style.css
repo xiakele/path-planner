@@ -1,5 +1,5 @@
-/* Design language modeled on sleepcalculator.com:
-   dark night-sky gradient, Nunito, soft yellow accent, dark rounded cards. */
+/* Design language: dark night-sky gradient, Nunito, soft gold accents,
+   dark rounded cards. */
 
 :root {
   /* Text tiers, tuned for AA contrast on the dark navy background */
@@ -11,7 +11,7 @@
 html {
   box-sizing: border-box;
   height: 100%;
-  background-color: #050c2d;
+  background-color: #0a1033;
   text-size-adjust: none;
   -webkit-text-size-adjust: none;
 }
@@ -46,7 +46,7 @@ select {
   inset: 0;
   width: 100%;
   height: 100vh;
-  background-image: linear-gradient(160deg, #050c2d 0%, #040b2c 50%, #1d2349 100%);
+  background-image: linear-gradient(160deg, #0a1033 0%, #0b0e2e 50%, #252c57 100%);
   z-index: -1;
 }
 
@@ -67,7 +67,7 @@ select {
 .logo__mark {
   width: 1.6em;
   height: 1.6em;
-  color: #ffdd88;
+  color: #f5d67b;
 }
 
 .logo__text {
@@ -128,8 +128,8 @@ select {
   font-size: 1em;
   font-weight: 600;
   color: #fff;
-  background-color: #0f1538;
-  border: 1px solid #1c2248;
+  background-color: #141b3f;
+  border: 1px solid #242c52;
   border-radius: 6px;
   appearance: none;
   cursor: pointer;
@@ -142,7 +142,7 @@ select {
 }
 
 select:focus-visible {
-  border-color: #ffdd88;
+  border-color: #f5d67b;
 }
 
 /* ---------- question ---------- */
@@ -156,7 +156,7 @@ select:focus-visible {
 }
 
 .accent {
-  color: #ffdd88;
+  color: #f5d67b;
 }
 
 /* ---------- drum time picker ---------- */
@@ -170,9 +170,9 @@ select:focus-visible {
   max-width: 22em;
   height: 220px;
   margin: 0 auto 1em;
-  border: 1px solid #1c2248;
+  border: 1px solid #242c52;
   border-radius: 13px;
-  background-color: rgba(15, 21, 56, 0.99);
+  background-color: rgba(20, 27, 63, 0.99);
   overflow: hidden;
   box-shadow: 5px 5px 20px -5px rgba(0, 0, 0, 0.1);
 }
@@ -187,8 +187,8 @@ select:focus-visible {
   margin-top: -22px;
   height: 44px;
   width: 100%;
-  border-top: 1px solid #1c2248;
-  border-bottom: 1px solid #1c2248;
+  border-top: 1px solid #242c52;
+  border-bottom: 1px solid #242c52;
   pointer-events: none;
 }
 
@@ -198,7 +198,7 @@ select:focus-visible {
   z-index: 2;
   inset: 0;
   pointer-events: none;
-  box-shadow: inset 0px 5px 8px -3px rgba(3, 6, 23, 0.3);
+  box-shadow: inset 0px 5px 8px -3px rgba(6, 10, 30, 0.3);
 }
 
 /* drum columns (scoped to the time picker — the route selects reuse the
@@ -239,7 +239,7 @@ select:focus-visible {
 }
 
 .select-options li.active {
-  color: #ffdd88;
+  color: #f5d67b;
 }
 
 /* ---------- now line & button ---------- */
@@ -264,7 +264,7 @@ select:focus-visible {
   display: flex;
   align-items: center;
   justify-content: center;
-  background-color: #e1d9a8;
+  background-color: #dccb96;
   color: #000;
   font-size: 1.125em;
   font-weight: 600;
@@ -274,14 +274,14 @@ select:focus-visible {
   max-width: 100%;
   margin: 0 auto;
   border-radius: 4px;
-  border: 1px solid #b1a873;
+  border: 1px solid #9c9166;
   box-shadow: 5px 5px 20px -5px rgba(0, 0, 0, 0.1);
   transition: background-color 0.3s;
 }
 
 .button:hover,
 .button:focus-visible {
-  background-color: #ebe5c1;
+  background-color: #e4dcb2;
   transition: background-color 0.1s;
 }
 
@@ -328,7 +328,7 @@ select:focus-visible {
 }
 
 .time-view__title {
-  color: #ffdd88;
+  color: #f5d67b;
   font-size: 1.375em;
   font-weight: 600;
   line-height: 1.25;
@@ -354,8 +354,8 @@ select:focus-visible {
 
 .time-list__item {
   border-radius: 6px;
-  background-color: #202646;
-  box-shadow: 0px 2px 8px -4px rgba(5, 12, 45, 0.2);
+  background-color: #242b50;
+  box-shadow: 0px 2px 8px -4px rgba(10, 16, 51, 0.2);
   padding: 0.8em 1em;
   display: flex;
   align-items: center;
@@ -364,7 +364,7 @@ select:focus-visible {
 }
 
 .time-list__item_suggested {
-  background-color: #262c52;
+  background-color: #2b3360;
 }
 
 .time-list__item_departed {
@@ -447,7 +447,7 @@ select:focus-visible {
 .tag {
   margin-left: auto;
   font-size: 0.6em;
-  color: #ffdd88;
+  color: #f5d67b;
   text-transform: uppercase;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -461,7 +461,7 @@ select:focus-visible {
 }
 
 .offset b {
-  color: #ffdd88;
+  color: #f5d67b;
   font-weight: 600;
 }
 
