@@ -34,9 +34,9 @@ origin and how far away each departure is from right now.
 2. Pick the arrival time with the drum picker.
 3. Hit **Find trains**.
 
-Each result card shows the first train's departure with its offset from now
-("in 12 min", or dimmed "departed X min ago" for the closest missed options),
-the full itinerary with per-leg times, and any transfer waits. Missed options
+Each result card leads with the departure and arrival times plus the total
+duration, the full itinerary with per-leg times and live status, and any
+transfer waits; already-departed options appear dimmed ("departed X min ago"). Missed options
 keep showing around midnight — including trains from the previous calendar
 day's timetable — so you can see the last connection that would have made it
 instead of an empty list.

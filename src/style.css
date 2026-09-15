@@ -410,14 +410,14 @@ select:focus-visible {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  flex-shrink: 0;
-  max-width: 45%;
+  min-width: 0;
 }
 
 .time-list__main {
   display: flex;
   align-items: baseline;
   gap: 0.5em;
+  flex-wrap: wrap; /* narrow screens: let the cluster break instead of clip */
   min-width: 0;
 }
 
@@ -426,6 +426,24 @@ select:focus-visible {
   font-weight: 700;
   color: #fff;
   font-size: 1.25em;
+}
+
+/* Arrival beside the departure: smaller but clearly readable */
+.time-list__arr {
+  white-space: nowrap;
+  font-weight: 600;
+  color: #fff;
+  font-size: 1em;
+}
+
+.time-list__arr .arrow {
+  color: #f5d67b;
+  font-weight: 700;
+}
+
+.time-nextday {
+  font-size: 0.85em;
+  color: var(--text-muted);
 }
 
 .dep-station {
@@ -441,19 +459,28 @@ select:focus-visible {
   width: 100%;
 }
 
+/* One leg = identity row (chip + line name + badge) with the times below,
+   so nothing shares a line and nothing gets cut off */
 .time-list__leg {
   display: flex;
-  align-items: center;
-  gap: 0.5em;
+  flex-direction: column;
+  gap: 0.15em;
   color: var(--text-muted);
   font-size: 0.85em;
   width: 100%;
 }
 
+.leg-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+}
+
+/* Times indent to line up under the line name (chip 0.7em + gap 0.5em) and
+   with the transfer rows below */
 .leg-times {
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  padding-left: 1.2em;
 }
 
 .leg-times b {
@@ -499,6 +526,13 @@ select:focus-visible {
 /* Struck-through timetable time shown next to the adjusted one */
 .dep-was {
   font-size: 0.62em;
+  font-weight: 600;
+  color: var(--text-faint);
+  text-decoration: line-through;
+}
+
+.arr-was {
+  font-size: 0.75em;
   font-weight: 600;
   color: var(--text-faint);
   text-decoration: line-through;
@@ -591,14 +625,6 @@ select:focus-visible {
 
   .tag {
     margin-left: 0;
-  }
-
-  .time-list__leg {
-    flex-wrap: wrap;
-  }
-
-  .line-name {
-    max-width: 100%;
   }
 
   .leg-times {

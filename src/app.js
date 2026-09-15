@@ -77,6 +77,41 @@ function fmtTime(minutes) {
   return `${h12}:${pad2(mm)} ${ampm}`;
 }
 
+// Minutes -> "51 min" / "1 h 09 min"
+function fmtDur(min) {
+  const m = Math.round(min);
+  if (m < 60) return `${m} min`;
+  return `${Math.floor(m / 60)} h ${pad2(m % 60)} min`;
+}
+
+// Compact line names for the result cards ("JSQ – 33 St via HOB"): terminals
+// as signed in the stations, shorter readable forms elsewhere; derived from
+// the line's stops so timetable changes need no maintenance here, falling
+// back to the full timetable name for anything unfamiliar
+const SHORT_STOP = {
+  NWK: "NWK",
+  HAR: "HAR",
+  JSQ: "JSQ",
+  GRO: "Grove St",
+  EXC: "Exchange Pl",
+  NEW: "Newport",
+  HOB: "HOB",
+  CHR: "Christopher St",
+  "09S": "9 St",
+  "14S": "14 St",
+  "23S": "23 St",
+  "33S": "33 St",
+  WTC: "WTC",
+};
+
+function lineShortName(line) {
+  const a = SHORT_STOP[line.stops[0]];
+  const b = SHORT_STOP[line.stops[line.stops.length - 1]];
+  if (!a || !b) return line.name;
+  const via = line.name.includes("(via Hoboken)") ? " via HOB" : "";
+  return `${a} – ${b}${via}`;
+}
+
 function nowMinutes() {
   const d = new Date();
   return d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60;
@@ -253,16 +288,21 @@ function renderResults(from, to, targetMinutes) {
       (idx === suggestedIdx ? " time-list__item_suggested" : "") +
       (departed ? " time-list__item_departed" : "");
 
-    const when =
-      depAbs >= 1440 || arrAbs >= 1440 ? " <span class='dep-station'>(next day)</span>" : "";
-    // First-leg delay: show the adjusted departure with the timetable time
-    // struck through next to it
+    // Header: the departure is the headline; the (already delay-adjusted)
+    // arrival and total duration follow at a smaller size. Each time carries
+    // its own "(next day)" tag and a struck-through timetable "was" when its
+    // leg is running off-timetable
     const depDelay = legs[0]?.delay;
+    const arrDelay = legs[legs.length - 1]?.delay;
     const depWas = depDelay ? ` <s class="dep-was">${fmtTime(depAbs - depDelay)}</s>` : "";
+    const arrWas = arrDelay ? ` <s class="arr-was">${fmtTime(arrAbs - arrDelay)}</s>` : "";
+    const depNext = depAbs >= 1440 ? " <span class='time-nextday'>(next day)</span>" : "";
+    const arrNext = arrAbs >= 1440 ? " <span class='time-nextday'>(next day)</span>" : "";
     item.innerHTML = `
       <div class="time-list__main">
-        <span class="time-list__text">${fmtTime(depAbs)}${depWas}</span>
-        <span class="dep-station">from ${STATIONS[from]}${when}</span>
+        <span class="time-list__text">${fmtTime(depAbs)}${depWas}${depNext}</span>
+        <span class="time-list__arr"><span class="arrow">→</span> ${fmtTime(arrAbs)}${arrWas}${arrNext}</span>
+        <span class="dep-station">· ${fmtDur(arrAbs - depAbs)}</span>
         ${idx === suggestedIdx ? "<span class='tag'>suggested</span>" : ""}
       </div>
       <div class="time-list__legs">
@@ -282,12 +322,16 @@ function renderResults(from, to, targetMinutes) {
               leg.delay
                 ? `<b>${fmtTime(t)}</b> <s class="leg-was">${fmtTime(t - leg.delay)}</s>`
                 : `<b>${fmtTime(t)}</b>`;
+            // Identity row (chip + short line name + badge), times below it —
+            // nothing shares a line, so nothing gets cut off
             const legRow = `
           <div class="time-list__leg">
-            <span class="line-chip" style="--c:${leg.line.color}"></span>
-            <span class="line-name">${leg.line.name}</span>
-            <span class="leg-times">${times(leg.board.time)} ${STATIONS[leg.board.stop]} → ${times(leg.alight.time)} ${STATIONS[leg.alight.stop]}</span>
-            ${badge}
+            <div class="leg-head">
+              <span class="line-chip" style="--c:${leg.line.color}"></span>
+              <span class="line-name">${lineShortName(leg.line)}</span>
+              ${badge}
+            </div>
+            <div class="leg-times">${times(leg.board.time)} ${STATIONS[leg.board.stop]} → ${times(leg.alight.time)} ${STATIONS[leg.alight.stop]}</div>
           </div>`;
             if (li === legs.length - 1) return legRow;
             const wait = legs[li + 1].board.time - leg.alight.time;
