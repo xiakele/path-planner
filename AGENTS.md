@@ -4,29 +4,39 @@ Guidance for AI coding agents working in this repo.
 
 ## What this is
 
-Pure static site (no framework, no bundler, no build step): `index.html` at the
-repo root is the static/Vercel entry point, code lives in `src/`, schedule data
-in `data/`. The user-facing overview is in `README.md`.
+Static site + one serverless function (no framework, no bundler, no build
+step): `index.html` at the repo root is the static/Vercel entry point, code
+lives in `src/`, schedule data in `data/`, the real-time proxy in `api/`.
+The user-facing overview is in `README.md`.
 
-- `src/app.js` — all UI (route selects, drum time picker, rendering).
+- `src/app.js` — all UI (route selects, drum time picker, rendering, the
+  30 s real-time poll + auto re-render).
 - `src/search.js` — journey search; pure ES module with no DOM access, so it
   can be tested directly from Node.
+- `src/realtime.js` — pairs feed entries with timetable trips into per-trip
+  delays; pure like search.js, tested by `scripts/test-realtime.mjs`.
+- `api/realtime.js` — Vercel function proxying the PANYNJ RidePATH feed
+  (upstream has no CORS headers); 15 s cache.
 - `scripts/update-schedule.mjs` — parses the PANYNJ timetables into
   `data/schedule.json`.
 
 ## Commands
 
-- `pnpm dev` — local server (python http.server on :8080). There is no build step.
+- `pnpm dev` — local server on :8080 via `vercel dev` (serves `api/` too;
+  needs a one-time `vercel link`). Without linking, the site still works,
+  just without real-time data. There is no build step.
+- `pnpm test:realtime` — Node harness for the delay layer (fixed clocks, no
+  framework; keep extending it when touching `src/realtime.js`).
 - `pnpm lint` / `pnpm format` / `pnpm format:check` — ESLint + Prettier; run
   `pnpm lint && pnpm format:check` before committing.
 - `pnpm update:schedule` — re-fetch and re-parse panynj.gov into
   `data/schedule.json`; needs network access. Commit the refreshed snapshot
   when PATH schedules change.
-- No test framework exists. Verify search logic with a Node harness, e.g.
-  `node --input-type=module -e "import('./src/search.js')"` style scripts, and
-  pass a fixed `mNow` to `findJourneys` so results are reproducible regardless
-  of the current time. Verify UI changes in a real browser (agent-browser),
-  including a ≤480px viewport.
+- No test framework exists. Verify search/delay logic with the harness above
+  or `node --input-type=module` scripts, passing a fixed `mNow` (and `nowMs`
+  for realtime.js) so results are reproducible regardless of the current
+  time. Verify UI changes in a real browser (agent-browser), including a
+  ≤480px viewport.
 
 ## Gotchas
 
@@ -50,3 +60,12 @@ in `data/`. The user-facing overview is in `README.md`.
 - Text colors use the contrast tiers defined in `:root`
   (`--text-muted` / `--text-faint` / `--text-dim`) — use the vars, not literal
   grays.
+- Real-time layer: the feed calls Grove/Exchange `GRV`/`EXP` (timetable:
+  `GRO`/`EXC`), `lineColor` may be a comma list for combined services, and
+  there are no trip IDs — pairing is nearest-projected-arrival per
+  (station, terminus, color) with a greedy global match
+  (`src/realtime.js`). `findJourneys` takes the resulting delay Map as an
+  optional 6th arg and stamps `delay` on each leg (undefined = timetable
+  only, 0 = on time). Legs/`depAbs`/`arrAbs` are then already
+  delay-adjusted — render them as-is and derive "was" times as
+  `time - delay`.

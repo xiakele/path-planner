@@ -26,15 +26,19 @@ function toMinutes(hhmm) {
   return parseInt(hhmm.slice(0, 2), 10) * 60 + parseInt(hhmm.slice(3), 10);
 }
 
-// All trips of one calendar day, with stop times shifted to absolute minutes
-function collectTrips(schedule, date, base) {
+// All trips of one calendar day, with stop times shifted to absolute minutes.
+// `adjust` (from realtime.js's buildDelays, keyed by the raw trip arrays)
+// optionally shifts a trip's whole run by its observed real-time delay.
+function collectTrips(schedule, date, base, adjust) {
   const out = [];
   for (const line of schedule.days[dayKeyFor(date)] ?? []) {
     for (const trip of line.trips) {
       const mins = trip.map((t) => (t === null ? null : toMinutes(t)));
       const first = mins.find((t) => t !== null);
-      const times = mins.map((t) => (t === null ? null : base + t + (t < first ? 1440 : 0)));
-      out.push({ line, stops: line.stops, times, base });
+      let times = mins.map((t) => (t === null ? null : base + t + (t < first ? 1440 : 0)));
+      const delay = adjust?.get(trip);
+      if (delay) times = times.map((t) => (t === null ? null : t + delay));
+      out.push({ line, stops: line.stops, times, base, raw: trip });
     }
   }
   return out;
@@ -98,14 +102,22 @@ function reconstruct(best, from, to) {
 // later than the entered time (interpreted as the next occurrence). First legs
 // that already departed are included as "missed" context while the target is
 // still today.
-export function findJourneys(schedule, from, to, enteredMinutes, mNow) {
+//
+// `adjust` (optional, from realtime.js's buildDelays) shifts trips by their
+// observed real-time delays before searching, so catchability, transfers and
+// arrivals reflect reality; legs carry the applied `delay` (undefined =
+// timetable-only, 0 = matched and on time).
+export function findJourneys(schedule, from, to, enteredMinutes, mNow, adjust) {
   if (from === to) return [];
   const target = enteredMinutes < mNow ? enteredMinutes + 1440 : enteredMinutes;
 
   const today = new Date();
   const tomorrow = new Date(today);
   tomorrow.setDate(today.getDate() + 1);
-  const allTrips = [...collectTrips(schedule, today, 0), ...collectTrips(schedule, tomorrow, 1440)];
+  const allTrips = [
+    ...collectTrips(schedule, today, 0, adjust),
+    ...collectTrips(schedule, tomorrow, 1440, adjust),
+  ];
 
   const seen = new Map(); // departure minute -> journey (dedupe, keep the simplest)
 
@@ -141,6 +153,8 @@ export function findJourneys(schedule, from, to, enteredMinutes, mNow) {
         line: t.line,
         board: { stop: t.stops[board], time: t.times[board] },
         alight: { stop: t.stops[alight], time: t.times[alight] },
+        // observed real-time delay of this leg's trip (undefined = no match)
+        delay: adjust?.get(t.raw),
       })),
       depAbs,
       arrAbs: arrival.time,

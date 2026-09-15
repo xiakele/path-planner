@@ -12,6 +12,11 @@ origin and how far away each departure is from right now.
 - **Arrive-by search** — the three latest catchable departures ranked by
   departure time (dominated options pruned), each attributed to a specific
   first train.
+- **Real-time delays** — trains observed running off-timetable (via the
+  PANYNJ RidePATH feed, the same one panynj.gov uses) shift the search
+  before ranking: a delayed train you can still catch stays catchable, tight
+  transfers and arrivals reflect reality, and result cards show "on time" /
+  "+5 min" badges with the timetable time struck through.
 - **Transfer connections** — up to 2 transfers with a 3-minute minimum
   connection time, e.g. Journal Square → Newport → Hoboken.
 - **Next-occurrence time logic** — if the entered time has already passed, the
@@ -44,24 +49,41 @@ the full itinerary with per-leg times, and any transfer waits.
   earliest completion from each alighting point (≤ 2 transfers, ≥ 3-minute
   transfers), on an absolute timeline that spans tonight and tomorrow so
   post-midnight departures resolve to the right calendar day.
+- `api/realtime.js` is a Vercel serverless function that proxies the PANYNJ
+  real-time feed (the upstream sends no CORS headers, so the browser can't
+  fetch it directly), slims it down and caches it for 15 s.
+- `src/realtime.js` pairs feed entries with timetable trips — same station,
+  same terminus, matching line color, nearest projected arrival within a
+  tolerance — and produces per-trip delays that `search.js` applies before
+  ranking.
 - `src/app.js` is the UI; there is no framework and no build step.
 
 ## Development
 
 ```sh
 pnpm install
-pnpm dev              # serve locally at http://localhost:8080
+pnpm dev              # serve locally at http://localhost:8080 (vercel dev —
+                      # runs api/ too; needs a one-time `vercel link`)
+pnpm test:realtime    # Node harness for the real-time delay layer
 pnpm update:schedule  # refresh data/schedule.json from panynj.gov
 pnpm lint             # ESLint
 pnpm format           # Prettier
 pnpm format:check
 ```
 
+(`pnpm dev` hops through the `dev:stack` script because `vercel dev`
+refuses to run when the `dev` script literally invokes `vercel dev` —
+it thinks it would recurse.)
+
+Without `vercel link`, `pnpm dev` still serves the site but `/api/realtime`
+404s — the app falls back to timetable-only times (the results header says
+so).
+
 ## Deployment
 
-The site is fully static — `index.html` plus `src/` and `data/`. Deploy to
-Vercel with zero configuration (`vercel` auto-detects a static project), or
-serve the directory with any static file server.
+Deploy to Vercel with zero configuration: the static site plus the
+`api/realtime.js` serverless function. (Serving the directory with a plain
+static file server works too, minus the real-time layer.)
 
 Schedule data changes a few times a year; re-run `pnpm update:schedule` and
 commit the refreshed `data/schedule.json` when PATH announces new timetables.
@@ -70,6 +92,11 @@ commit the refreshed `data/schedule.json` when PATH announces new timetables.
 
 - The PANYNJ site warns trains may leave up to 3 minutes earlier or later
   than the times shown — treat tight connections accordingly.
+- Real-time caveats: the feed has no trip IDs, so trip/entry pairing is a
+  nearest-time heuristic; it only covers roughly the next 30–45 minutes
+  (later journeys show timetable times); and an observed delay is applied to
+  the train's whole run. When the feed is unreachable or stale (> 2 min),
+  the app silently falls back to timetable times.
 - 9 St & 23 St stations are closed nightly 12 AM–5 AM; overnight trains skip
   them, which the schedule reflects.
 - Special-event timetables (holidays, planned outages) are not parsed — only

@@ -3,6 +3,7 @@
 // Journey search lives in search.js.
 
 import { findJourneys } from "./search.js";
+import { buildDelays, normalizeRt, STALE_AFTER_MS } from "./realtime.js";
 
 const STATIONS = {
   NWK: "Newark",
@@ -40,6 +41,8 @@ const STATION_ORDER = [
 const ITEM_H = 44;
 
 let schedule = null;
+let rt = null; // normalized real-time snapshot; null = timetable-only
+let lastQuery = null; // { from, to, targetMinutes } of the rendered results
 
 const fromSelect = document.getElementById("fromSelect");
 const toSelect = document.getElementById("toSelect");
@@ -54,6 +57,7 @@ const resultsTitle = document.getElementById("resultsTitle");
 const resultsSubtitle = document.getElementById("resultsSubtitle");
 const resultList = document.getElementById("resultList");
 const resultsError = document.getElementById("resultsError");
+const liveStatus = document.getElementById("liveStatus");
 const fetchedDate = document.getElementById("fetchedDate");
 
 // ---------- helpers ----------
@@ -180,10 +184,44 @@ function offsetText(depAbs, mNow) {
   return `<b>departed</b> ${-diff} min ago`;
 }
 
+// ---------- real-time feed ----------
+
+// Poll the serverless proxy (api/realtime.js). On failure keep the last
+// snapshot until it goes stale, so one dropped poll doesn't flip the results
+// back to timetable times.
+async function refreshRealtime() {
+  try {
+    const res = await fetch("api/realtime");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const next = normalizeRt(await res.json(), Date.now());
+    if (next) rt = next;
+  } catch {
+    /* proxy missing (plain static serving) or unreachable: keep the last snapshot */
+  }
+  if (rt && Date.now() - rt.fetchedAt > STALE_AFTER_MS) rt = null;
+  updateLiveStatus();
+}
+
+// Freshness pill in the results header ("real-time · updated Ns ago" vs.
+// timetable-only). Runs on every poll tick, so the age stays honest.
+function updateLiveStatus() {
+  if (rt) {
+    const age = Math.max(0, Math.round((Date.now() - rt.fetchedAt) / 1000));
+    liveStatus.innerHTML = "<span class='live-dot'></span>real-time · updated " + age + "s ago";
+  } else {
+    liveStatus.textContent = "timetable times only — real-time status unavailable";
+  }
+  liveStatus.hidden = false;
+}
+
 // ---------- rendering ----------
 
 function renderResults(from, to, targetMinutes) {
-  const journeys = findJourneys(schedule, from, to, targetMinutes, nowMinutes());
+  const mNow = nowMinutes();
+  // Trips observed running off-timetable are shifted before searching, so
+  // catchability, transfers and arrivals reflect real-time reality
+  const adjust = buildDelays(schedule, rt, mNow);
+  const journeys = findJourneys(schedule, from, to, targetMinutes, mNow, adjust);
   const dayLabel = new Date().toLocaleDateString("en-US", { weekday: "long" });
 
   resultsTitle.innerHTML = `If you want to arrive at <span class="accent">${STATIONS[to]}</span> by ${fmtTime(targetMinutes)}…`;
@@ -201,7 +239,6 @@ function renderResults(from, to, targetMinutes) {
     return;
   }
 
-  const mNow = nowMinutes();
   const suggestedIdx = journeys.findIndex((j) => !j.departed);
   if (suggestedIdx === -1) {
     resultsSubtitle.textContent = `No catchable train — these are the latest ones that would have arrived in time:`;
@@ -216,20 +253,39 @@ function renderResults(from, to, targetMinutes) {
 
     const when =
       depAbs >= 1440 || arrAbs >= 1440 ? " <span class='dep-station'>(next day)</span>" : "";
+    // First-leg delay: show the adjusted departure with the timetable time
+    // struck through next to it
+    const depDelay = legs[0]?.delay;
+    const depWas = depDelay ? ` <s class="dep-was">${fmtTime(depAbs - depDelay)}</s>` : "";
     item.innerHTML = `
       <div class="time-list__main">
-        <span class="time-list__text">${fmtTime(depAbs)}</span>
+        <span class="time-list__text">${fmtTime(depAbs)}${depWas}</span>
         <span class="dep-station">from ${STATIONS[from]}${when}</span>
         ${idx === suggestedIdx ? "<span class='tag'>suggested</span>" : ""}
       </div>
       <div class="time-list__legs">
         ${legs
           .map((leg, li) => {
+            // Per-leg live badge from the matched feed entry; adjusted times
+            // with the timetable time struck through when they differ
+            const badge =
+              leg.delay === undefined
+                ? ""
+                : leg.delay > 0
+                  ? `<span class="leg-badge leg-badge_late">+${leg.delay} min</span>`
+                  : leg.delay < 0
+                    ? `<span class="leg-badge leg-badge_early">${-leg.delay} min early</span>`
+                    : `<span class="leg-badge leg-badge_ontime">on time</span>`;
+            const times = (t) =>
+              leg.delay
+                ? `<b>${fmtTime(t)}</b> <s class="leg-was">${fmtTime(t - leg.delay)}</s>`
+                : `<b>${fmtTime(t)}</b>`;
             const legRow = `
           <div class="time-list__leg">
             <span class="line-chip" style="--c:${leg.line.color}"></span>
             <span class="line-name">${leg.line.name}</span>
-            <span class="leg-times"><b>${fmtTime(leg.board.time)}</b> ${STATIONS[leg.board.stop]} → <b>${fmtTime(leg.alight.time)}</b> ${STATIONS[leg.alight.stop]}</span>
+            <span class="leg-times">${times(leg.board.time)} ${STATIONS[leg.board.stop]} → ${times(leg.alight.time)} ${STATIONS[leg.alight.stop]}</span>
+            ${badge}
           </div>`;
             if (li === legs.length - 1) return legRow;
             const wait = legs[li + 1].board.time - leg.alight.time;
@@ -250,17 +306,30 @@ function showResults() {
   if (!from || !to || from === to) return;
 
   destLabel.textContent = STATIONS[to];
-  renderResults(from, to, pickedMinutes());
+  lastQuery = { from, to, targetMinutes: pickedMinutes() };
+  renderResults(from, to, lastQuery.targetMinutes);
   resultsSection.classList.remove("content-section_hidden");
   setTimeout(() => {
     resultsSection.scrollIntoView({ behavior: "smooth", block: "start" });
   }, 50);
 }
 
-// ---------- clock ----------
+// ---------- clock & polling ----------
 
 function updateNowTime() {
   nowTime.textContent = fmtTime(nowMinutes());
+}
+
+// Every 30 s: refresh the clock, poll the real-time feed and, while results
+// are on screen, re-render them with the fresh snapshot (delays can turn a
+// missed train catchable or vice versa)
+function tick() {
+  updateNowTime();
+  refreshRealtime().then(() => {
+    if (lastQuery && !resultsSection.classList.contains("content-section_hidden")) {
+      renderResults(lastQuery.from, lastQuery.to, lastQuery.targetMinutes);
+    }
+  });
 }
 
 // ---------- boot ----------
@@ -292,7 +361,8 @@ async function boot() {
 
   initPicker();
   updateNowTime();
-  setInterval(updateNowTime, 30000);
+  refreshRealtime(); // first poll; the pill fills in when results are shown
+  setInterval(tick, 30000);
 
   findBtn.addEventListener("click", showResults);
   againBtn.addEventListener("click", () => {

@@ -471,6 +471,70 @@ select:focus-visible {
   content: "↳ ";
 }
 
+/* ---------- real-time annotations ---------- */
+
+/* Freshness pill under the results subtitle (hidden until first status) */
+.live-status {
+  display: flex;
+  align-items: center;
+  gap: 0.45em;
+  margin: -0.7em 0 1.1em; /* tuck under the subtitle */
+  font-size: 0.75em;
+  color: var(--text-faint);
+}
+
+.live-status[hidden] {
+  display: none;
+}
+
+.live-dot {
+  width: 0.55em;
+  height: 0.55em;
+  border-radius: 50%;
+  background-color: #7fd48a;
+  box-shadow: 0 0 6px 1px rgba(127, 212, 138, 0.55);
+  flex-shrink: 0;
+}
+
+/* Struck-through timetable time shown next to the adjusted one */
+.dep-was {
+  font-size: 0.62em;
+  font-weight: 600;
+  color: var(--text-faint);
+  text-decoration: line-through;
+}
+
+.leg-was {
+  color: var(--text-faint);
+  font-weight: 400;
+  text-decoration: line-through;
+}
+
+/* Per-leg live badge: on time (green) / late (gold) / early (muted) */
+.leg-badge {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 0.82em;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 0.1em 0.55em;
+  border-radius: 999px;
+  border: 1px solid var(--text-dim);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.leg-badge_ontime {
+  color: #7fd48a;
+  border-color: rgba(127, 212, 138, 0.45);
+}
+
+.leg-badge_late {
+  color: #f5d67b;
+  border-color: rgba(245, 214, 123, 0.55);
+}
+
 .tag {
   margin-left: auto;
   font-size: 0.6em;
