@@ -13,8 +13,6 @@ import {
   MATCH_TOLERANCE_MIN,
   RT_HORIZON_MIN,
   STALE_AFTER_MS,
-  EARLY_BIAS,
-  MAX_EARLY_MIN,
 } from "../src/realtime.js";
 import { findJourneys } from "../src/search.js";
 
@@ -211,46 +209,6 @@ const jsq33 = schedule.days.weekday[2];
   const delays = buildDelays(dup, rt, M_NOW, NOW_MS);
   check("nearer trip claims the entry", delays.get(dup.days.weekday[0].trips[1]) === 1);
   check("other trip stays unpaired", !delays.has(dup.days.weekday[0].trips[0]));
-}
-{
-  // Early readings are distrusted (trains rarely beat the timetable): a
-  // projection between two trains pairs with the earlier one as "late",
-  // not with the later one as "early"
-  const early = mkSchedule();
-  early.days.weekday[0].trips = [
-    ["09:55", "10:01", "10:06", "10:10"], // NEW 601
-    ["10:05", "10:11", "10:16", "10:20"], // NEW 611, 10 min behind
-  ];
-  const rt = normalizeRt(
-    { fetchedAt: NOW_MS, stations: { NEW: [entry("WTC", "65C100", 606)] } }, // +5 vs 601, -5 vs 611
-    NOW_MS,
-  );
-  const delays = buildDelays(early, rt, M_NOW, NOW_MS);
-  check("early-distrust constants", EARLY_BIAS === 3 && MAX_EARLY_MIN === 3);
-  check(
-    "entry between two trains reads as the earlier one running late",
-    delays.get(early.days.weekday[0].trips[0]) === 5,
-  );
-  check(
-    "later train stays unpaired instead of '5 early'",
-    !delays.has(early.days.weekday[0].trips[1]),
-  );
-}
-{
-  // Beyond the cap an early reading is dropped outright (a train that far
-  // "early" is a stale entry claimed by the wrong trip); within it, a small
-  // unopposed early is honest and kept
-  const cap = mkSchedule();
-  cap.days.weekday[0].trips = [["10:05", "10:11", "10:16", "10:20"]]; // NEW 611
-  const mk = (abs) =>
-    normalizeRt({ fetchedAt: NOW_MS, stations: { NEW: [entry("WTC", "65C100", abs)] } }, NOW_MS);
-  const trip = cap.days.weekday[0].trips[0];
-  check("4 min early is dropped", !buildDelays(cap, mk(607), M_NOW, NOW_MS).has(trip));
-  check(
-    "3 min early is kept at the cap",
-    buildDelays(cap, mk(608), M_NOW, NOW_MS).get(trip) === -3,
-  );
-  check("unopposed 2 min early is kept", buildDelays(cap, mk(609), M_NOW, NOW_MS).get(trip) === -2);
 }
 
 console.log("findJourneys + real-time adjustments");

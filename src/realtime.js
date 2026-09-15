@@ -9,13 +9,6 @@
 // becomes the trip's delay and is applied to its whole run — a delay is
 // assumed to hold along the entire trip, an approximation the README notes.
 //
-// Early readings are distrusted: trains rarely beat the timetable (PANYNJ
-// itself warns only "up to 3 minutes earlier"), so a projection that reads
-// as "this trip N early" is usually a late earlier train or a stale entry
-// claimed by the wrong trip. EARLY_BIAS makes such pairings lose to a
-// plausible "earlier train is late" reading, and MAX_EARLY_MIN drops the
-// rest outright.
-//
 // Pure ES module like search.js: no DOM access, explicit clock inputs, so it
 // can be tested directly from Node (scripts/test-realtime.mjs).
 
@@ -28,12 +21,6 @@ import { dayKeyFor } from "./search.js";
 export const MATCH_TOLERANCE_MIN = 15;
 export const RT_HORIZON_MIN = 45; // only stop times within this window of "now" are pairable
 export const STALE_AFTER_MS = 120000; // older snapshots are ignored (timetable-only fallback)
-// Ranking penalty for early readings: "this trip is 2 early" loses to "an
-// earlier train is <= 5 late" in the greedy matching
-export const EARLY_BIAS = 3;
-// Hard cap on early readings (PANYNJ's own adherence warning is "up to 3
-// minutes earlier"); pairings that read earlier than this are dropped
-export const MAX_EARLY_MIN = 3;
 const GRACE_MIN = 5; // a stop time this recently passed can still be paired (the train may be delayed)
 
 // The feed names two stations differently than the timetable
@@ -105,7 +92,7 @@ export function buildDelays(schedule, rt, mNow, nowMs = Date.now()) {
   ];
 
   // Pass 1: collect every plausible (trip, feed entry) pairing
-  const candidates = []; // { trip, key, rank, delay }
+  const candidates = []; // { trip, key, absDiff, delay }
   for (const { dayKey, base } of tables) {
     for (const line of schedule.days[dayKey] ?? []) {
       // Travel direction is encoded in the stop order, so the forward terminus
@@ -143,10 +130,7 @@ export function buildDelays(schedule, rt, mNow, nowMs = Date.now()) {
             candidates.push({
               trip,
               key: `${line.stops[s]}|${ei}`,
-              // Early readings rank as if they were EARLY_BIAS minutes worse
-              // than they measure, so a plausible "earlier train is late"
-              // pairing beats a small "this trip is early" one
-              rank: diff < 0 ? -diff + EARLY_BIAS : diff,
+              absDiff: Math.abs(diff),
               delay: Math.round(diff),
             });
           }
@@ -157,18 +141,15 @@ export function buildDelays(schedule, rt, mNow, nowMs = Date.now()) {
 
   // Pass 2: greedy global matching by confidence — the closest pairing
   // claims its trip and feed entry first, so one feed train can't inflate
-  // two timetable trips and vice versa. Early readings beyond
-  // MAX_EARLY_MIN are not recorded (trains don't beat the table by 4+ min:
-  // that pairing is a late earlier train or a stale entry), leaving the
-  // trip unpaired for the UI to show as "unverified".
-  candidates.sort((a, b) => a.rank - b.rank);
+  // two timetable trips and vice versa
+  candidates.sort((a, b) => a.absDiff - b.absDiff);
   const usedEntries = new Set();
   const usedTrips = new Set();
   for (const c of candidates) {
     if (usedTrips.has(c.trip) || usedEntries.has(c.key)) continue;
     usedTrips.add(c.trip);
     usedEntries.add(c.key);
-    if (c.delay >= -MAX_EARLY_MIN) delays.set(c.trip, c.delay); // 0 = matched and on time
+    delays.set(c.trip, c.delay); // 0 = matched and on time
   }
   return delays;
 }

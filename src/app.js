@@ -326,15 +326,10 @@ function renderResults(from, to, targetMinutes) {
         ${legs
           .map((leg, li) => {
             // Per-leg live badge from the matched feed entry; adjusted times
-            // with the timetable time struck through when they differ. A
-            // train no feed entry vouches for shows as "unverified" while
-            // live data exists (when the whole feed is down, the status pill
-            // already says timetable-only for every card)
+            // with the timetable time struck through when they differ
             const badge =
               leg.delay === undefined
-                ? rt
-                  ? `<span class="leg-badge">unverified</span>`
-                  : ""
+                ? ""
                 : leg.delay > 0
                   ? `<span class="leg-badge leg-badge_late">+${leg.delay} min</span>`
                   : leg.delay < 0
