@@ -101,8 +101,12 @@ commit the refreshed `data/schedule.json` when PATH announces new timetables.
 - Real-time caveats: the feed has no trip IDs, so trip/entry pairing is a
   nearest-time heuristic; it only covers roughly the next 30–45 minutes
   (later journeys show timetable times); and an observed delay is applied to
-  the train's whole run. When the feed is unreachable or stale (> 2 min),
-  the app silently falls back to timetable times.
+  the train's whole run. Early readings are distrusted (trains rarely beat
+  the timetable by more than the ~3 minutes PANYNJ allows) — a projection
+  between two trains reads as the earlier one running late, and anything
+  earlier than that is dropped. Trains the feed can't vouch for are marked
+  "unverified" while live data is available. When the feed is unreachable or
+  stale (> 2 min), the app silently falls back to timetable times.
 - 9 St & 23 St stations are closed nightly 12 AM–5 AM; overnight trains skip
   them, which the schedule reflects.
 - Special-event timetables (holidays, planned outages) are not parsed — only
