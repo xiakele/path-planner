@@ -10,7 +10,7 @@ lives in `src/`, schedule data in `data/`, the real-time proxy in `api/`.
 The user-facing overview is in `README.md`.
 
 - `src/app.js` — all UI (route selects, drum time picker, rendering, the
-  30 s real-time poll + auto re-render).
+  16 s real-time poll with a 1 s freshness ticker, paused in hidden tabs).
 - `src/search.js` — journey search; pure ES module with no DOM access, so it
   can be tested directly from Node.
 - `src/realtime.js` — pairs feed entries with timetable trips into per-trip

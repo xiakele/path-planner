@@ -224,6 +224,11 @@ function offsetText(depAbs, mNow) {
 
 // ---------- real-time feed ----------
 
+// Just above the proxy's 15 s response cache: every poll then returns fresh
+// upstream-derived data, while polling faster would only re-download the
+// identical cached payload
+const POLL_MS = 16000;
+
 // Poll the serverless proxy (api/realtime.js). On failure keep the last
 // snapshot until it goes stale, so one dropped poll doesn't flip the results
 // back to timetable times.
@@ -241,7 +246,8 @@ async function refreshRealtime() {
 }
 
 // Freshness pill in the results header ("real-time · updated Ns ago" vs.
-// timetable-only). Runs on every poll tick, so the age stays honest.
+// timetable-only). The age is recomputed on every call, so the 1 s ticker
+// below keeps it counting honestly between polls.
 function updateLiveStatus() {
   if (rt) {
     const age = Math.max(0, Math.round((Date.now() - rt.fetchedAt) / 1000));
@@ -250,6 +256,13 @@ function updateLiveStatus() {
     liveStatus.textContent = "timetable times only — real-time status unavailable";
   }
   liveStatus.hidden = false;
+}
+
+// 1 s ticker for the pill's age counter — a single text update per second;
+// browsers throttle timers in hidden tabs, so it effectively idles there
+function tickStatus() {
+  if (document.hidden || resultsSection.classList.contains("content-section_hidden")) return;
+  updateLiveStatus();
 }
 
 // ---------- rendering ----------
@@ -261,6 +274,10 @@ function renderResults(from, to, targetMinutes) {
   const adjust = buildDelays(schedule, rt, mNow);
   const journeys = findJourneys(schedule, from, to, targetMinutes, mNow, adjust);
   const dayLabel = new Date().toLocaleDateString("en-US", { weekday: "long" });
+
+  // Keep the freshness pill in step with whatever is on screen (the 1 s
+  // ticker covers it between polls)
+  updateLiveStatus();
 
   resultsTitle.innerHTML = `If you want to arrive at <span class="accent">${STATIONS[to]}</span> by ${fmtTime(targetMinutes)}…`;
   resultsSubtitle.textContent = `You can catch one of these trains from ${STATIONS[from]} (${dayLabel} schedule):`;
@@ -366,11 +383,13 @@ function updateNowTime() {
   nowTime.textContent = fmtTime(nowMinutes());
 }
 
-// Every 30 s: refresh the clock, poll the real-time feed and, while results
-// are on screen, re-render them with the fresh snapshot (delays can turn a
-// missed train catchable or vice versa)
+// Every POLL_MS: refresh the clock, poll the real-time feed and, while
+// results are on screen, re-render them with the fresh snapshot (delays can
+// turn a missed train catchable or vice versa). Hidden tabs skip the poll;
+// the visibilitychange handler in boot() catches up on return.
 function tick() {
   updateNowTime();
+  if (document.hidden) return;
   refreshRealtime().then(() => {
     if (lastQuery && !resultsSection.classList.contains("content-section_hidden")) {
       renderResults(lastQuery.from, lastQuery.to, lastQuery.targetMinutes);
@@ -408,7 +427,15 @@ async function boot() {
   initPicker();
   updateNowTime();
   refreshRealtime(); // first poll; the pill fills in when results are shown
-  setInterval(tick, 30000);
+  setInterval(tick, POLL_MS);
+  setInterval(tickStatus, 1000); // 1 s freshness ticker
+  // Back from a background tab: catch up immediately if the snapshot has
+  // aged past the proxy cache window, instead of waiting for the next tick
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && (!rt || Date.now() - rt.fetchedAt > POLL_MS - 1000)) {
+      tick();
+    }
+  });
 
   findBtn.addEventListener("click", showResults);
   againBtn.addEventListener("click", () => {

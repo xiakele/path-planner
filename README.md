@@ -55,7 +55,9 @@ instead of an empty list.
   (yesterday's trains can only ever appear as dimmed missed-train context).
 - `api/realtime.js` is a Vercel serverless function that proxies the PANYNJ
   real-time feed (the upstream sends no CORS headers, so the browser can't
-  fetch it directly), slims it down and caches it for 15 s.
+  fetch it directly), slims it down and caches it for 15 s; the browser
+  polls it every 16 s (pausing in background tabs, catching up on return)
+  and re-renders the results on each poll.
 - `src/realtime.js` pairs feed entries with timetable trips — same station,
   same terminus, matching line color, nearest projected arrival within a
   tolerance — and produces per-trip delays that `search.js` applies before
