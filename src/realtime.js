@@ -73,14 +73,20 @@ export function buildDelays(schedule, rt, mNow, nowMs = Date.now()) {
   const midnightMs = nowMs - mNow * 60000; // start of "today" in the absolute-minute model
   const delays = new Map();
 
-  // Trains currently running span two tables: today's (base 0) and
-  // tomorrow's (base 1440 — PATH tables are per calendar day, so the trains
-  // rolling after midnight belong to tomorrow's table, even when both days
-  // share the same dayKey and thus the same trip arrays)
+  // Trains currently running span three tables: yesterday's (base -1440),
+  // today's (base 0) and tomorrow's (base 1440). PATH tables are per
+  // calendar day, so the trains rolling just after midnight belong to
+  // yesterday's table and the ones about to roll after the next midnight to
+  // tomorrow's — even when the days share a dayKey and thus the same trip
+  // arrays. The 50-minute pairing window below can only ever hold one base
+  // of a given trip, so the three tables don't double-pair.
   const today = new Date(nowMs);
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
   const tomorrow = new Date(today);
   tomorrow.setDate(tomorrow.getDate() + 1);
   const tables = [
+    { dayKey: dayKeyFor(yesterday), base: -1440 },
     { dayKey: dayKeyFor(today), base: 0 },
     { dayKey: dayKeyFor(tomorrow), base: 1440 },
   ];
@@ -107,9 +113,7 @@ export function buildDelays(schedule, rt, mNow, nowMs = Date.now()) {
           const abs = base + t + (t < first ? 1440 : 0);
           // The feed only lists the next ~30–45 min of trains, so only stop
           // times near "now" can be paired (a just-missed stop still counts:
-          // the train may be running behind). A 50-minute window can never
-          // hold both bases of the same trip, so the two tables don't
-          // double-pair.
+          // the train may be running behind)
           if (abs < mNow - GRACE_MIN || abs > mNow + RT_HORIZON_MIN) continue;
           const entries = rt.stations[line.stops[s]];
           if (!entries) continue;

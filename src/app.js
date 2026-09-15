@@ -181,6 +181,9 @@ function offsetText(depAbs, mNow) {
     if (diff < 60) return `in <b>${diff} min</b>`;
     return `in <b>${Math.floor(diff / 60)} h ${diff % 60} min</b>`;
   }
+  // Missed context can be hours old (yesterday's last trains); format the
+  // long ones like the "in" branch does
+  if (-diff >= 60) return `<b>departed</b> ${Math.floor(-diff / 60)} h ${-diff % 60} min ago`;
   return `<b>departed</b> ${-diff} min ago`;
 }
 
@@ -234,8 +237,7 @@ function renderResults(from, to, targetMinutes) {
   if (journeys.length === 0) {
     resultsSubtitle.textContent = `Even with transfers, no connection from ${STATIONS[from]} arrives by ${fmtTime(targetMinutes)}.`;
     resultsError.hidden = false;
-    resultsError.textContent =
-      "Try an earlier arrival time — or an earlier train leaves you time to spare.";
+    resultsError.textContent = "No train gets you there that early — pick a later time.";
     return;
   }
 

@@ -286,10 +286,36 @@ console.log("findJourneys + real-time adjustments");
   check("post-midnight trip matched via tomorrow's table", adjust.get(line.trips[0]) === 0);
 
   const j = findJourneys(am, "NEW", "WTC", 1465, mNowAM, adjust);
+  // The catchable 00:13 train plus, as dimmed context, the overnight train
+  // that left NEW at 23:56 and also arrives by the deadline
   check(
     "post-midnight journey carries the live pairing",
-    j.length === 1 && j[0].depAbs === 1453 && j[0].legs[0].delay === 0,
+    j.length === 2 &&
+      j[0].depAbs === 1453 &&
+      !j[0].departed &&
+      j[0].legs[0].delay === 0 &&
+      j[1].depAbs === 1436 &&
+      j[1].departed,
   );
+}
+{
+  // Just AFTER midnight the still-running overnight train belongs to
+  // yesterday's table (base -1440): its mid-run stops (EXC 00:01 = abs 1)
+  // must still pair with feed entries projected in the early-morning window
+  const am2 = mkSchedule();
+  const nightLine = am2.days.weekday[3]; // 23:50 -> 00:05 overnight trip
+  const mNow2 = 5; // 00:05
+  const midnight2 = NOW_MS - mNow2 * 60000;
+  const entry2 = {
+    target: "WTC",
+    secondsToArrival: String(Math.round((midnight2 + 7 * 60000 - NOW_MS) / 1000)), // 00:07 at EXC
+    lineColor: "65C100",
+    headSign: "",
+    lastUpdatedMs: NOW_MS,
+  };
+  const rt2 = normalizeRt({ fetchedAt: NOW_MS, stations: { EXP: [entry2] } }, NOW_MS);
+  const adjust2 = buildDelays(am2, rt2, mNow2, NOW_MS);
+  check("running train matched via yesterday's table", adjust2.get(nightLine.trips[0]) === 6); // EXC 1 -> 7
 }
 
 console.log(`${checks - failures}/${checks} checks passed`);

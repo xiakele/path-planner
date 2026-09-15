@@ -36,7 +36,10 @@ origin and how far away each departure is from right now.
 
 Each result card shows the first train's departure with its offset from now
 ("in 12 min", or dimmed "departed X min ago" for the closest missed options),
-the full itinerary with per-leg times, and any transfer waits.
+the full itinerary with per-leg times, and any transfer waits. Missed options
+keep showing around midnight — including trains from the previous calendar
+day's timetable — so you can see the last connection that would have made it
+instead of an empty list.
 
 ## How it works
 
@@ -47,8 +50,9 @@ the full itinerary with per-leg times, and any transfer waits.
 - `src/search.js` searches that snapshot: it keeps every first-leg trip
   boarding at the origin, then uses a small connection-scan to find the
   earliest completion from each alighting point (≤ 2 transfers, ≥ 3-minute
-  transfers), on an absolute timeline that spans tonight and tomorrow so
-  post-midnight departures resolve to the right calendar day.
+  transfers), on an absolute timeline that spans yesterday, tonight and
+  tomorrow so pre-/post-midnight trains resolve to the right calendar day
+  (yesterday's trains can only ever appear as dimmed missed-train context).
 - `api/realtime.js` is a Vercel serverless function that proxies the PANYNJ
   real-time feed (the upstream sends no CORS headers, so the browser can't
   fetch it directly), slims it down and caches it for 15 s.
@@ -64,7 +68,7 @@ the full itinerary with per-leg times, and any transfer waits.
 pnpm install
 pnpm dev              # serve locally at http://localhost:8080 (vercel dev —
                       # runs api/ too; needs a one-time `vercel link`)
-pnpm test:realtime    # Node harness for the real-time delay layer
+pnpm test             # Node harnesses (search + real-time delay layers)
 pnpm update:schedule  # refresh data/schedule.json from panynj.gov
 pnpm lint             # ESLint
 pnpm format           # Prettier

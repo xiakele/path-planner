@@ -14,6 +14,7 @@
 export const TRANSFER_MIN = 3; // minimum minutes to change trains
 export const MAX_TRANSFERS = 2; // maximum number of transfers in a journey
 const GRACE = 1; // minutes: a trip this close to "now" still counts as catchable
+const CONTEXT_MAX_MIN = 180; // how long after its arrival a missed journey stays useful context
 
 export function dayKeyFor(date) {
   const dow = date.getDay();
@@ -38,7 +39,7 @@ function collectTrips(schedule, date, base, adjust) {
       let times = mins.map((t) => (t === null ? null : base + t + (t < first ? 1440 : 0)));
       const delay = adjust?.get(trip);
       if (delay) times = times.map((t) => (t === null ? null : t + delay));
-      out.push({ line, stops: line.stops, times, base, raw: trip });
+      out.push({ line, stops: line.stops, times, raw: trip });
     }
   }
   return out;
@@ -99,9 +100,12 @@ function reconstruct(best, from, to) {
 }
 
 // Returns up to 3 journeys: the ones arriving at `to` latest while still no
-// later than the entered time (interpreted as the next occurrence). First legs
-// that already departed are included as "missed" context while the target is
-// still today.
+// later than the entered time (interpreted as the next occurrence). First
+// legs that already departed are always included as dimmed "missed" context;
+// with enough catchable options the latest-departure-first ranking keeps
+// them out of the top 3, so they surface only when you've missed the last
+// connection (typically around midnight, when the deadline rolls to the
+// next day but the trains that would have made it are already gone).
 //
 // `adjust` (optional, from realtime.js's buildDelays) shifts trips by their
 // observed real-time delays before searching, so catchability, transfers and
@@ -111,10 +115,16 @@ export function findJourneys(schedule, from, to, enteredMinutes, mNow, adjust) {
   if (from === to) return [];
   const target = enteredMinutes < mNow ? enteredMinutes + 1440 : enteredMinutes;
 
+  // Yesterday's table is collected too (at base -1440) so that just after
+  // midnight the before-midnight trains can still appear as missed context —
+  // a PATH table is per calendar day, so those trips belong to yesterday
   const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
   const tomorrow = new Date(today);
   tomorrow.setDate(today.getDate() + 1);
   const allTrips = [
+    ...collectTrips(schedule, yesterday, -1440, adjust),
     ...collectTrips(schedule, today, 0, adjust),
     ...collectTrips(schedule, tomorrow, 1440, adjust),
   ];
@@ -126,9 +136,10 @@ export function findJourneys(schedule, from, to, enteredMinutes, mNow, adjust) {
     if (i < 0) continue;
     const depAbs = trip.times[i];
     if (depAbs === null) continue;
-    // A missed first leg is only shown as context while the target is today
-    const departed = trip.base === 0 && depAbs < mNow - GRACE;
-    if (departed && target > 1440) continue;
+    // A missed first leg is context, not a suggestion. Base-independent:
+    // tomorrow's trips all depart at >= 1440 > mNow, so only yesterday's and
+    // today's can ever read as departed.
+    const departed = depAbs < mNow - GRACE;
 
     // Every stop after the origin is a potential alighting point, including
     // the destination itself (plain direct rides fall out of the same path)
@@ -144,6 +155,11 @@ export function findJourneys(schedule, from, to, enteredMinutes, mNow, adjust) {
     const best = continuation(allTrips, alights, MAX_TRANSFERS);
     const arrival = best.get(to);
     if (!arrival || arrival.time > target) continue;
+    // Context that completed long ago (yesterday evening's leftovers) is
+    // noise, not help — only keep journeys that arrived within the last
+    // CONTEXT_MAX_MIN (catchable ones always arrive in the future, so this
+    // only prunes missed context)
+    if (arrival.time < mNow - CONTEXT_MAX_MIN) continue;
 
     const legs = reconstruct(best, from, to);
     if (!legs) continue;

@@ -25,8 +25,10 @@ The user-facing overview is in `README.md`.
 - `pnpm dev` — local server on :8080 via `vercel dev` (serves `api/` too;
   needs a one-time `vercel link`). Without linking, the site still works,
   just without real-time data. There is no build step.
-- `pnpm test:realtime` — Node harness for the delay layer (fixed clocks, no
-  framework; keep extending it when touching `src/realtime.js`).
+- `pnpm test` — Node harnesses for the search and delay layers
+  (`scripts/test-search.mjs`, `scripts/test-realtime.mjs`; fixed clocks, no
+  framework; keep extending them when touching `src/search.js` /
+  `src/realtime.js`).
 - `pnpm lint` / `pnpm format` / `pnpm format:check` — ESLint + Prettier; run
   `pnpm lint && pnpm format:check` before committing.
 - `pnpm update:schedule` — re-fetch and re-parse panynj.gov into
@@ -44,15 +46,23 @@ The user-facing overview is in `README.md`.
   excludes it). `scripts/update-schedule.mjs` resolves it via `../data`
   relative to its own file; `src/app.js` fetches it **document-relative**, so
   `index.html` must stay at the repo root.
-- `src/search.js` works in absolute minutes since today's midnight: today's
-  timetable is base 0, tomorrow's is base 1440. PATH tables are per calendar
-  day (Saturday 00:10 runs Friday night), and trips whose arrival is earlier
-  on the clock than their departure cross midnight and shift forward once.
+- `src/search.js` works in absolute minutes since today's midnight: yesterday's
+  timetable is base -1440, today's is base 0, tomorrow's is base 1440 (PATH
+  tables are per calendar day — Saturday 00:10 runs Friday night — so the
+  three tables let pre-/post-midnight trains resolve to the right day; only
+  today's and tomorrow's are ever catchable, yesterday's is missed-train
+  context). Trips whose arrival is earlier on the clock than their departure
+  cross midnight and shift forward once.
 - Results are ranked by **latest catchable departure** (not arrival), deduped
   per departure minute, with dominated journeys pruned. Ranking/journey-shape
   constants: `TRANSFER_MIN = 3`, `MAX_TRANSFERS = 2` in `src/search.js`.
+- Departed first legs are always kept as dimmed **missed-train context** —
+  they only surface in the top 3 when catchable options run out (typically
+  around midnight). Context is bounded to journeys that arrived within the
+  last `CONTEXT_MAX_MIN` (180) minutes; catchable journeys are unaffected.
 - Displayed times are `depAbs/arrAbs mod 1440`; the "(next day)" tag is driven
-  by values ≥ 1440. Overnight trains intentionally skip 9 St / 23 St
+  by values ≥ 1440 (negative values from yesterday's table wrap to PM times).
+  Overnight trains intentionally skip 9 St / 23 St
   (stations close 12 AM–5 AM) — trust the data as printed.
 - Route selects and drum columns share the `select-wrap` class; the drum's
   scroll + edge-fade styles are scoped to `.time-picker .select-wrap` on

@@ -6,7 +6,9 @@
     "update:schedule": "node scripts/update-schedule.mjs",
     "dev": "pnpm run dev:stack",
     "dev:stack": "vercel dev --listen 8080",
+    "test:search": "node scripts/test-search.mjs",
     "test:realtime": "node scripts/test-realtime.mjs",
+    "test": "node scripts/test-search.mjs && node scripts/test-realtime.mjs",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
