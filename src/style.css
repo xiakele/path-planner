@@ -338,6 +338,14 @@ select:focus-visible {
   background-color: rgba(255, 255, 255, 0.06);
 }
 
+/* Secondary action stacked under the primary button (inside .time-view):
+   same width as the primary button; the section-level ghost buttons below
+   the results/board keep the smaller width and larger 1.75em gap */
+.time-view .button_ghost {
+  margin-top: 0.9em;
+  width: 16em;
+}
+
 /* ---------- results ---------- */
 
 .results {
@@ -352,6 +360,12 @@ select:focus-visible {
   opacity: 0;
   visibility: hidden;
   transform: translateY(2em);
+  /* Two views share the page: a hidden one must hand its space back to the
+     visible one (and the footer), not just fade out — so collapse it out of
+     the flow entirely; the reveal still animates via opacity/transform */
+  height: 0;
+  overflow: hidden;
+  margin-top: 0;
 }
 
 .time-view__title {
@@ -406,11 +420,25 @@ select:focus-visible {
   flex-shrink: 0;
 }
 
+/* Feed-only train (no timetable line behind it): dashed ring marks the
+   projected-only identity */
+.line-chip_feed {
+  border: 1px dashed var(--text-dim);
+}
+
 .line-name {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
+  color: var(--text-muted);
+}
+
+/* On the departure board the line name sits in the headline row next to the
+   time, so it reads as a primary identity, not a leg footnote */
+.time-list__main .line-name {
+  color: #fff;
+  font-weight: 600;
 }
 
 .time-list__main {
@@ -567,6 +595,12 @@ select:focus-visible {
 .leg-badge_late {
   color: #f5d67b;
   border-color: rgba(245, 214, 123, 0.55);
+}
+
+/* Feed-only departure row: observed live, nothing to compare against */
+.leg-badge_live {
+  color: #7fd48a;
+  border-color: rgba(127, 212, 138, 0.45);
 }
 
 .tag {

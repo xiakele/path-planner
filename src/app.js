@@ -4,6 +4,7 @@
 
 import { findJourneys } from "./search.js";
 import { buildDelays, normalizeRt, STALE_AFTER_MS } from "./realtime.js";
+import { DEPARTURES_WINDOW_MIN, findDepartures } from "./departures.js";
 
 const STATIONS = {
   NWK: "Newark",
@@ -43,6 +44,7 @@ const ITEM_H = 44;
 let schedule = null;
 let rt = null; // normalized real-time snapshot; null = timetable-only
 let lastQuery = null; // { from, to, targetMinutes } of the rendered results
+let lastBoard = null; // { station } of the rendered departure board
 
 const fromSelect = document.getElementById("fromSelect");
 const toSelect = document.getElementById("toSelect");
@@ -51,6 +53,7 @@ const destLabel = document.getElementById("destLabel");
 const timePicker = document.getElementById("timePicker");
 const nowTime = document.getElementById("nowTime");
 const findBtn = document.getElementById("findBtn");
+const departuresBtn = document.getElementById("departuresBtn");
 const againBtn = document.getElementById("againBtn");
 const resultsSection = document.getElementById("resultsSection");
 const resultsTitle = document.getElementById("resultsTitle");
@@ -58,6 +61,13 @@ const resultsSubtitle = document.getElementById("resultsSubtitle");
 const resultList = document.getElementById("resultList");
 const resultsError = document.getElementById("resultsError");
 const liveStatus = document.getElementById("liveStatus");
+const departuresSection = document.getElementById("departuresSection");
+const departuresTitle = document.getElementById("departuresTitle");
+const departuresSubtitle = document.getElementById("departuresSubtitle");
+const departuresList = document.getElementById("departuresList");
+const departuresError = document.getElementById("departuresError");
+const departuresLiveStatus = document.getElementById("departuresLiveStatus");
+const departuresAgainBtn = document.getElementById("departuresAgainBtn");
 const fetchedDate = document.getElementById("fetchedDate");
 
 // ---------- helpers ----------
@@ -222,6 +232,16 @@ function offsetText(depAbs, mNow) {
   return `<b>departed</b> ${-diff} min ago`;
 }
 
+// Badge for an observed delay (undefined = no live match, so no badge):
+// on time (green) / late (gold) / early (muted). Shared by journey legs and
+// the departure board rows.
+function delayBadge(delay) {
+  if (delay === undefined) return "";
+  if (delay > 0) return `<span class="leg-badge leg-badge_late">+${delay} min</span>`;
+  if (delay < 0) return `<span class="leg-badge leg-badge_early">${-delay} min early</span>`;
+  return `<span class="leg-badge leg-badge_ontime">on time</span>`;
+}
+
 // ---------- real-time feed ----------
 
 // Just above the proxy's 15 s response cache: every poll then returns fresh
@@ -242,27 +262,38 @@ async function refreshRealtime() {
     /* proxy missing (plain static serving) or unreachable: keep the last snapshot */
   }
   if (rt && Date.now() - rt.fetchedAt > STALE_AFTER_MS) rt = null;
-  updateLiveStatus();
+  for (const el of visibleStatusEls()) updateLiveStatus(el);
 }
 
-// Freshness pill in the results header ("real-time · updated Ns ago" vs.
+// Which freshness pills are currently on screen (journey results, departure
+// board, or neither) — only those need updating
+function visibleStatusEls() {
+  const els = [];
+  if (!resultsSection.classList.contains("content-section_hidden")) els.push(liveStatus);
+  if (!departuresSection.classList.contains("content-section_hidden")) {
+    els.push(departuresLiveStatus);
+  }
+  return els;
+}
+
+// Freshness pill in a section header ("real-time · updated Ns ago" vs.
 // timetable-only). The age is recomputed on every call, so the 1 s ticker
 // below keeps it counting honestly between polls.
-function updateLiveStatus() {
+function updateLiveStatus(el) {
   if (rt) {
     const age = Math.max(0, Math.round((Date.now() - rt.fetchedAt) / 1000));
-    liveStatus.innerHTML = "<span class='live-dot'></span>real-time · updated " + age + "s ago";
+    el.innerHTML = "<span class='live-dot'></span>real-time · updated " + age + "s ago";
   } else {
-    liveStatus.textContent = "timetable times only — real-time status unavailable";
+    el.textContent = "timetable times only — real-time status unavailable";
   }
-  liveStatus.hidden = false;
+  el.hidden = false;
 }
 
-// 1 s ticker for the pill's age counter — a single text update per second;
+// 1 s ticker for the pills' age counters — a single text update per second;
 // browsers throttle timers in hidden tabs, so it effectively idles there
 function tickStatus() {
-  if (document.hidden || resultsSection.classList.contains("content-section_hidden")) return;
-  updateLiveStatus();
+  if (document.hidden) return;
+  for (const el of visibleStatusEls()) updateLiveStatus(el);
 }
 
 // ---------- rendering ----------
@@ -277,7 +308,7 @@ function renderResults(from, to, targetMinutes) {
 
   // Keep the freshness pill in step with whatever is on screen (the 1 s
   // ticker covers it between polls)
-  updateLiveStatus();
+  updateLiveStatus(liveStatus);
 
   resultsTitle.innerHTML = `If you want to arrive at <span class="accent">${STATIONS[to]}</span> by ${fmtTime(targetMinutes)}…`;
   resultsSubtitle.textContent = `You can catch one of these trains from ${STATIONS[from]} (${dayLabel} schedule):`;
@@ -327,14 +358,7 @@ function renderResults(from, to, targetMinutes) {
           .map((leg, li) => {
             // Per-leg live badge from the matched feed entry; adjusted times
             // with the timetable time struck through when they differ
-            const badge =
-              leg.delay === undefined
-                ? ""
-                : leg.delay > 0
-                  ? `<span class="leg-badge leg-badge_late">+${leg.delay} min</span>`
-                  : leg.delay < 0
-                    ? `<span class="leg-badge leg-badge_early">${-leg.delay} min early</span>`
-                    : `<span class="leg-badge leg-badge_ontime">on time</span>`;
+            const badge = delayBadge(leg.delay);
             const times = (t) =>
               leg.delay
                 ? `<b>${fmtTime(t)}</b> <s class="leg-was">${fmtTime(t - leg.delay)}</s>`
@@ -371,9 +395,85 @@ function showResults() {
   destLabel.textContent = STATIONS[to];
   lastQuery = { from, to, targetMinutes: pickedMinutes() };
   renderResults(from, to, lastQuery.targetMinutes);
+  // One view at a time: the departure board hides while results are up
+  departuresSection.classList.add("content-section_hidden");
   resultsSection.classList.remove("content-section_hidden");
   setTimeout(() => {
     resultsSection.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, 50);
+}
+
+// ---------- departure board ----------
+
+// Board for the "From" station: the next DEPARTURES_WINDOW_MIN of trains,
+// delay-adjusted where the feed has a match, plus feed-only extras. Rows
+// come back nearest-departure-first, so the list reads top-to-bottom as
+// "what's next".
+function renderDepartures(station) {
+  const mNow = nowMinutes();
+  const rows = findDepartures(schedule, station, mNow, Date.now(), rt);
+  const dayLabel = new Date().toLocaleDateString("en-US", { weekday: "long" });
+
+  // Keep the freshness pill in step with whatever is on screen (the 1 s
+  // ticker covers it between polls)
+  updateLiveStatus(departuresLiveStatus);
+
+  departuresTitle.innerHTML = `Next trains from <span class="accent">${STATIONS[station]}</span>`;
+  departuresSubtitle.textContent = `Leaving within ${DEPARTURES_WINDOW_MIN} minutes (${dayLabel} schedule):`;
+
+  departuresList.innerHTML = "";
+  departuresError.hidden = true;
+  departuresList.hidden = false;
+
+  if (rows.length === 0) {
+    departuresSubtitle.textContent = `No trains are due from ${STATIONS[station]} in the next ${DEPARTURES_WINDOW_MIN} minutes.`;
+    departuresError.hidden = false;
+    departuresError.textContent =
+      "Late-night service runs rarely — the board refreshes automatically.";
+    return;
+  }
+
+  for (const row of rows) {
+    const departed = row.depAbs < mNow;
+    const item = document.createElement("div");
+    item.className = "time-list__item" + (departed ? " time-list__item_departed" : "");
+    // Headline time (delay-adjusted, "(next day)" tag when past midnight)
+    // with the timetable "was" struck through when the train runs late
+    const was = row.delay ? ` <s class="dep-was">${fmtTime(row.depAbs - row.delay)}</s>` : "";
+    const next = row.depAbs >= 1440 ? " <span class='time-nextday'>(next day)</span>" : "";
+    // Feed-only extras have no line: a dashed chip in the feed's color and
+    // the destination stand in for the line identity
+    const chipColor = row.line ? row.line.color : (row.colors?.[0] ?? "");
+    const chip = `<span class="line-chip${row.fromFeed ? " line-chip_feed" : ""}" style="--c:${chipColor}"></span>`;
+    const name = row.line
+      ? lineShortName(row.line)
+      : `to ${STATIONS[row.terminus] ?? row.terminus}`;
+    const badge = row.fromFeed
+      ? `<span class="leg-badge leg-badge_live">live</span>`
+      : delayBadge(row.delay);
+    item.innerHTML = `
+      <div class="time-list__main">
+        <span class="time-list__text">${fmtTime(row.depAbs)}${was}${next}</span>
+        ${chip}<span class="line-name">${name}</span>
+        ${badge}
+      </div>
+      <div class="offset">${departed ? "" : "departs "}${offsetText(row.depAbs, mNow)}</div>
+    `;
+    departuresList.appendChild(item);
+  }
+}
+
+function showDepartures() {
+  const station = fromSelect.value;
+  if (!station) return;
+
+  lastBoard = { station };
+  renderDepartures(station);
+  // One view at a time: journey results hide while the board is up
+  resultsSection.classList.add("content-section_hidden");
+  departuresSection.classList.remove("content-section_hidden");
+  setTimeout(() => {
+    departuresSection.scrollIntoView({ behavior: "smooth", block: "start" });
   }, 50);
 }
 
@@ -383,16 +483,21 @@ function updateNowTime() {
   nowTime.textContent = fmtTime(nowMinutes());
 }
 
-// Every POLL_MS: refresh the clock, poll the real-time feed and, while
-// results are on screen, re-render them with the fresh snapshot (delays can
-// turn a missed train catchable or vice versa). Hidden tabs skip the poll;
-// the visibilitychange handler in boot() catches up on return.
+// Every POLL_MS: refresh the clock, poll the real-time feed and, while a
+// view is on screen, re-render it with the fresh snapshot (delays can turn a
+// missed train catchable or vice versa; the board rolls forward with "now").
+// Hidden tabs skip the poll; the visibilitychange handler in boot() catches
+// up on return.
 function tick() {
   updateNowTime();
   if (document.hidden) return;
   refreshRealtime().then(() => {
+    if (document.hidden) return;
     if (lastQuery && !resultsSection.classList.contains("content-section_hidden")) {
       renderResults(lastQuery.from, lastQuery.to, lastQuery.targetMinutes);
+    }
+    if (lastBoard && !departuresSection.classList.contains("content-section_hidden")) {
+      renderDepartures(lastBoard.station);
     }
   });
 }
@@ -438,8 +543,12 @@ async function boot() {
   });
 
   findBtn.addEventListener("click", showResults);
+  departuresBtn.addEventListener("click", showDepartures);
   againBtn.addEventListener("click", () => {
     timePicker.scrollIntoView({ behavior: "smooth", block: "center" });
+  });
+  departuresAgainBtn.addEventListener("click", () => {
+    document.querySelector(".route-picker").scrollIntoView({ behavior: "smooth", block: "center" });
   });
 }
 

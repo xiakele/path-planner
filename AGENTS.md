@@ -15,6 +15,9 @@ The user-facing overview is in `README.md`.
   can be tested directly from Node.
 - `src/realtime.js` — pairs feed entries with timetable trips into per-trip
   delays; pure like search.js, tested by `scripts/test-realtime.mjs`.
+- `src/departures.js` — live departure board at one station (timetable +
+  delay merge, feed-only extras); pure like search.js, tested by
+  `scripts/test-departures.mjs`.
 - `api/realtime.js` — Vercel function proxying the PANYNJ RidePATH feed
   (upstream has no CORS headers); 15 s cache.
 - `scripts/update-schedule.mjs` — parses the PANYNJ timetables into
@@ -25,10 +28,11 @@ The user-facing overview is in `README.md`.
 - `pnpm dev` — local server on :8080 via `vercel dev` (serves `api/` too;
   needs a one-time `vercel link`). Without linking, the site still works,
   just without real-time data. There is no build step.
-- `pnpm test` — Node harnesses for the search and delay layers
-  (`scripts/test-search.mjs`, `scripts/test-realtime.mjs`; fixed clocks, no
-  framework; keep extending them when touching `src/search.js` /
-  `src/realtime.js`).
+- `pnpm test` — Node harnesses for the search, delay and departure-board
+  layers (`scripts/test-search.mjs`, `scripts/test-realtime.mjs`,
+  `scripts/test-departures.mjs`; fixed clocks, no framework; keep extending
+  them when touching `src/search.js` / `src/realtime.js` /
+  `src/departures.js`).
 - `pnpm lint` / `pnpm format` / `pnpm format:check` — ESLint + Prettier; run
   `pnpm lint && pnpm format:check` before committing.
 - `pnpm update:schedule` — re-fetch and re-parse panynj.gov into
@@ -79,3 +83,13 @@ The user-facing overview is in `README.md`.
   only, 0 = on time). Legs/`depAbs`/`arrAbs` are then already
   delay-adjusted — render them as-is and derive "was" times as
   `time - delay`.
+- Departure board (`src/departures.js`): rows are the delay-adjusted
+  timetable departures at the station within `DEPARTURES_WINDOW_MIN` (45)
+  of now, **nearest departure first** — the opposite of the journey
+  results' latest-first ranking. A stop at a line's final station is an
+  arrival, not a departure (skipped); feed entries that match no timetable
+  train (same terminus, color, within `MATCH_TOLERANCE_MIN`) become
+  "live" extra rows with `line: null`. In `src/app.js` the results and
+  departures sections are mutually exclusive views; hidden sections
+  collapse via `height: 0` (see `.results.content-section_hidden`) so the
+  visible one reclaims the space — keep that when adding more views.

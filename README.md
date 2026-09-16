@@ -12,6 +12,11 @@ origin and how far away each departure is from right now.
 - **Arrive-by search** — the three latest catchable departures ranked by
   departure time (dominated options pruned), each attributed to a specific
   first train.
+- **Live departure board** — a second button shows the next ~45 minutes of
+  trains leaving the origin station right now: real-time projected times,
+  "on time" / "+5 min" badges, struck-through timetable times, and feed-only
+  extras the printed schedule doesn't know about, sorted nearest departure
+  first and refreshed on every poll.
 - **Real-time delays** — trains observed running off-timetable (via the
   PANYNJ RidePATH feed, the same one panynj.gov uses) shift the search
   before ranking: a delayed train you can still catch stays catchable, tight
@@ -32,7 +37,9 @@ origin and how far away each departure is from right now.
 
 1. Pick a route (defaults to Journal Square → 9th Street).
 2. Pick the arrival time with the drum picker.
-3. Hit **Find trains**.
+3. Hit **Find trains** — or **Live departures** for the departure board at
+   the origin station instead (the two views swap; each has a ghost button
+   to jump back to its picker).
 
 Each result card leads with the departure and arrival times plus the total
 duration, the full itinerary with per-leg times and live status, and any
@@ -62,6 +69,10 @@ instead of an empty list.
   same terminus, matching line color, nearest projected arrival within a
   tolerance — and produces per-trip delays that `search.js` applies before
   ranking.
+- `src/departures.js` builds the live departure board: the timetable's next
+  ~45 minutes at the origin station, delay-adjusted by the pairing above,
+  plus feed entries with no timetable counterpart as "live" extra rows;
+  nearest departure first.
 - `src/app.js` is the UI; there is no framework and no build step.
 
 ## Development
@@ -70,7 +81,7 @@ instead of an empty list.
 pnpm install
 pnpm dev              # serve locally at http://localhost:8080 (vercel dev —
                       # runs api/ too; needs a one-time `vercel link`)
-pnpm test             # Node harnesses (search + real-time delay layers)
+pnpm test             # Node harnesses (search, real-time delays, departures)
 pnpm update:schedule  # refresh data/schedule.json from panynj.gov
 pnpm lint             # ESLint
 pnpm format           # Prettier
@@ -102,7 +113,10 @@ commit the refreshed `data/schedule.json` when PATH announces new timetables.
   nearest-time heuristic; it only covers roughly the next 30–45 minutes
   (later journeys show timetable times); and an observed delay is applied to
   the train's whole run. When the feed is unreachable or stale (> 2 min),
-  the app silently falls back to timetable times.
+  the app silently falls back to timetable times. On the departure board,
+  a feed entry only shows as a "live" extra when no timetable train matches
+  it (same terminus, color, within the pairing tolerance) — same heuristic,
+  same limits.
 - 9 St & 23 St stations are closed nightly 12 AM–5 AM; overnight trains skip
   them, which the schedule reflects.
 - Special-event timetables (holidays, planned outages) are not parsed — only

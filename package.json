@@ -8,7 +8,8 @@
     "dev:stack": "vercel dev --listen 8080",
     "test:search": "node scripts/test-search.mjs",
     "test:realtime": "node scripts/test-realtime.mjs",
-    "test": "node scripts/test-search.mjs && node scripts/test-realtime.mjs",
+    "test:departures": "node scripts/test-departures.mjs",
+    "test": "node scripts/test-search.mjs && node scripts/test-realtime.mjs && node scripts/test-departures.mjs",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check ."

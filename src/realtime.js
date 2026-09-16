@@ -23,8 +23,9 @@ export const RT_HORIZON_MIN = 45; // only stop times within this window of "now"
 export const STALE_AFTER_MS = 120000; // older snapshots are ignored (timetable-only fallback)
 const GRACE_MIN = 5; // a stop time this recently passed can still be paired (the train may be delayed)
 
-// The feed names two stations differently than the timetable
-const FEED_TO_SCHED = { GRV: "GRO", EXP: "EXC" };
+// The feed names two stations differently than the timetable (shared with
+// departures.js's board builder)
+export const FEED_TO_SCHED = { GRV: "GRO", EXP: "EXC" };
 
 // "HH:MM" -> minutes since midnight (same parsing as search.js)
 function toMinutes(hhmm) {

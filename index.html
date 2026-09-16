@@ -106,6 +106,22 @@
               />
             </svg>
           </button>
+
+          <!-- Secondary action, sleepcalculator-style: live board at the
+               departure station instead of a journey search -->
+          <button class="button button_ghost" id="departuresBtn">
+            <span class="button__text">Live departures</span>
+            <svg class="button__icon" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="2" fill="currentColor" />
+              <path
+                d="M8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7M5.5 5.5a9 9 0 0 0 0 13M18.5 5.5a9 9 0 0 1 0 13"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+              />
+            </svg>
+          </button>
         </section>
 
         <section class="results content-section_hidden" id="resultsSection" aria-live="polite">
@@ -118,6 +134,19 @@
           </div>
           <button class="button button_ghost" id="againBtn">
             <span class="button__text">Change the time</span>
+          </button>
+        </section>
+
+        <section class="results content-section_hidden" id="departuresSection" aria-live="polite">
+          <div class="time-view">
+            <div class="time-view__title" id="departuresTitle"></div>
+            <p class="time-view__text time-view__text_mb" id="departuresSubtitle"></p>
+            <p class="live-status" id="departuresLiveStatus" hidden></p>
+            <div class="time-list" id="departuresList"></div>
+            <p class="time-view__text" id="departuresError" hidden></p>
+          </div>
+          <button class="button button_ghost" id="departuresAgainBtn">
+            <span class="button__text">Change the station</span>
           </button>
         </section>
 
