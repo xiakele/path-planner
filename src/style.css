@@ -624,6 +624,49 @@ select:focus-visible {
   font-weight: 600;
 }
 
+/* ---------- departure board scope switch ---------- */
+
+/* Segmented control between the freshness pill and the board list: the
+   active option reads in the gold accent, the inactive one as muted text */
+.board-switch {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.45em;
+  width: fit-content;
+  margin: -0.55em auto 1.15em; /* tuck under the pill, above the list */
+}
+
+.board-switch__opt {
+  padding: 0.35em 1.1em;
+  font-size: 0.78em;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  background: none;
+  border: 1px solid var(--text-dim);
+  border-radius: 999px;
+  cursor: pointer;
+  outline: none;
+  transition:
+    color 0.2s,
+    border-color 0.2s,
+    background-color 0.2s;
+}
+
+.board-switch__opt:hover,
+.board-switch__opt:focus-visible {
+  color: #fff;
+  border-color: var(--text-muted);
+}
+
+.board-switch__opt[aria-pressed="true"] {
+  color: #f5d67b;
+  border-color: rgba(245, 214, 123, 0.55);
+  background-color: rgba(245, 214, 123, 0.08);
+}
+
 /* ---------- footer ---------- */
 
 .footer {

@@ -44,7 +44,7 @@ const ITEM_H = 44;
 let schedule = null;
 let rt = null; // normalized real-time snapshot; null = timetable-only
 let lastQuery = null; // { from, to, targetMinutes } of the rendered results
-let lastBoard = null; // { station } of the rendered departure board
+let lastBoard = null; // { station, to, mode } of the rendered departure board
 
 const fromSelect = document.getElementById("fromSelect");
 const toSelect = document.getElementById("toSelect");
@@ -68,6 +68,8 @@ const departuresList = document.getElementById("departuresList");
 const departuresError = document.getElementById("departuresError");
 const departuresLiveStatus = document.getElementById("departuresLiveStatus");
 const departuresAgainBtn = document.getElementById("departuresAgainBtn");
+const boardRouteOpt = document.getElementById("boardRouteOpt");
+const boardAllOpt = document.getElementById("boardAllOpt");
 const fetchedDate = document.getElementById("fetchedDate");
 
 // ---------- helpers ----------
@@ -405,13 +407,20 @@ function showResults() {
 
 // ---------- departure board ----------
 
-// Board for the "From" station: the next DEPARTURES_WINDOW_MIN of trains,
-// delay-adjusted where the feed has a match, plus feed-only extras. Rows
-// come back nearest-departure-first, so the list reads top-to-bottom as
+// Board for the "From" station. Two scopes, switched by the segmented control
+// above the list:
+//   route (default) — only trains that connect to the current "To" station
+//     (direct or with transfers), each with the estimated arrival there;
+//   all — everything leaving the station within the window.
+// Rows come back nearest-departure-first, so the list reads top-to-bottom as
 // "what's next".
-function renderDepartures(station) {
+function renderDepartures(board) {
+  const { station, to, mode } = board;
   const mNow = nowMinutes();
-  const rows = findDepartures(schedule, station, mNow, Date.now(), rt);
+  const rows =
+    mode === "route"
+      ? findDepartures(schedule, station, mNow, Date.now(), rt, to)
+      : findDepartures(schedule, station, mNow, Date.now(), rt);
   const dayLabel = new Date().toLocaleDateString("en-US", { weekday: "long" });
 
   // Keep the freshness pill in step with whatever is on screen (the 1 s
@@ -419,17 +428,31 @@ function renderDepartures(station) {
   updateLiveStatus(departuresLiveStatus);
 
   departuresTitle.innerHTML = `Next trains from <span class="accent">${STATIONS[station]}</span>`;
-  departuresSubtitle.textContent = `Leaving within ${DEPARTURES_WINDOW_MIN} minutes (${dayLabel} schedule):`;
+  departuresSubtitle.textContent =
+    mode === "route"
+      ? `Toward ${STATIONS[to]} — direct or with transfers, leaving within ${DEPARTURES_WINDOW_MIN} minutes (${dayLabel} schedule):`
+      : `Leaving within ${DEPARTURES_WINDOW_MIN} minutes (${dayLabel} schedule):`;
+
+  // Scope switch: the route option's label follows the current destination
+  boardRouteOpt.textContent = `To ${STATIONS[to]}`;
+  boardRouteOpt.setAttribute("aria-pressed", String(mode === "route"));
+  boardAllOpt.setAttribute("aria-pressed", String(mode === "all"));
 
   departuresList.innerHTML = "";
   departuresError.hidden = true;
   departuresList.hidden = false;
 
   if (rows.length === 0) {
-    departuresSubtitle.textContent = `No trains are due from ${STATIONS[station]} in the next ${DEPARTURES_WINDOW_MIN} minutes.`;
+    if (mode === "route") {
+      departuresSubtitle.textContent = `No trains leaving ${STATIONS[station]} in the next ${DEPARTURES_WINDOW_MIN} minutes connect to ${STATIONS[to]}.`;
+      departuresError.textContent =
+        "Try All trains for everything leaving the station, or Find trains for later connections.";
+    } else {
+      departuresSubtitle.textContent = `No trains are due from ${STATIONS[station]} in the next ${DEPARTURES_WINDOW_MIN} minutes.`;
+      departuresError.textContent =
+        "Late-night service runs rarely — the board refreshes automatically.";
+    }
     departuresError.hidden = false;
-    departuresError.textContent =
-      "Late-night service runs rarely — the board refreshes automatically.";
     return;
   }
 
@@ -441,6 +464,16 @@ function renderDepartures(station) {
     // with the timetable "was" struck through when the train runs late
     const was = row.delay ? ` <s class="dep-was">${fmtTime(row.depAbs - row.delay)}</s>` : "";
     const next = row.depAbs >= 1440 ? " <span class='time-nextday'>(next day)</span>" : "";
+    // Route mode: the estimated arrival at the destination follows the
+    // departure (connection-scan's earliest, transfer waits included), with
+    // its own "was" when the arrival leg runs off-timetable
+    let arrHtml = "";
+    if (row.arrAbs !== undefined) {
+      const arrDelay = row.legs[row.legs.length - 1]?.delay;
+      const arrWas = arrDelay ? ` <s class="arr-was">${fmtTime(row.arrAbs - arrDelay)}</s>` : "";
+      const arrNext = row.arrAbs >= 1440 ? " <span class='time-nextday'>(next day)</span>" : "";
+      arrHtml = ` <span class="time-list__arr"><span class="arrow">→</span> ${fmtTime(row.arrAbs)}${arrWas}${arrNext}</span> <span class="dep-station">· ${fmtDur(row.arrAbs - row.depAbs)}</span>`;
+    }
     // Feed-only extras have no line: a dashed chip in the feed's color and
     // the destination stand in for the line identity
     const chipColor = row.line ? row.line.color : (row.colors?.[0] ?? "");
@@ -451,12 +484,26 @@ function renderDepartures(station) {
     const badge = row.fromFeed
       ? `<span class="leg-badge leg-badge_live">live</span>`
       : delayBadge(row.delay);
+    // Multi-leg rows: one compact line per change of trains, so a first leg
+    // that isn't itself headed to the destination still makes sense
+    let transfers = "";
+    if (row.legs && row.legs.length > 1) {
+      transfers = `<div class="time-list__legs">${row.legs
+        .slice(0, -1)
+        .map((leg, li) => {
+          const nextLeg = row.legs[li + 1];
+          const wait = Math.round(nextLeg.board.time - leg.alight.time);
+          return `<div class="time-list__transfer">transfer at ${STATIONS[leg.alight.stop]} to ${lineShortName(nextLeg.line)} · wait ${wait} min</div>`;
+        })
+        .join("")}</div>`;
+    }
     item.innerHTML = `
       <div class="time-list__main">
-        <span class="time-list__text">${fmtTime(row.depAbs)}${was}${next}</span>
+        <span class="time-list__text">${fmtTime(row.depAbs)}${was}${next}</span>${arrHtml}
         ${chip}<span class="line-name">${name}</span>
         ${badge}
       </div>
+      ${transfers}
       <div class="offset">${departed ? "" : "departs "}${offsetText(row.depAbs, mNow)}</div>
     `;
     departuresList.appendChild(item);
@@ -465,16 +512,27 @@ function renderDepartures(station) {
 
 function showDepartures() {
   const station = fromSelect.value;
-  if (!station) return;
+  const to = toSelect.value;
+  if (!station || !to || station === to) return;
 
-  lastBoard = { station };
-  renderDepartures(station);
+  // Fresh opens always start scoped to the current route; the switch toggles
+  // within the open board (and the poll re-render keeps the chosen mode)
+  lastBoard = { station, to, mode: "route" };
+  renderDepartures(lastBoard);
   // One view at a time: journey results hide while the board is up
   resultsSection.classList.add("content-section_hidden");
   departuresSection.classList.remove("content-section_hidden");
   setTimeout(() => {
     departuresSection.scrollIntoView({ behavior: "smooth", block: "start" });
   }, 50);
+}
+
+// Scope switch handler: re-render in place, no scrolling (the list is where
+// the eye already is)
+function setBoardMode(mode) {
+  if (!lastBoard || lastBoard.mode === mode) return;
+  lastBoard.mode = mode;
+  renderDepartures(lastBoard);
 }
 
 // ---------- clock & polling ----------
@@ -497,7 +555,7 @@ function tick() {
       renderResults(lastQuery.from, lastQuery.to, lastQuery.targetMinutes);
     }
     if (lastBoard && !departuresSection.classList.contains("content-section_hidden")) {
-      renderDepartures(lastBoard.station);
+      renderDepartures(lastBoard);
     }
   });
 }
@@ -544,6 +602,8 @@ async function boot() {
 
   findBtn.addEventListener("click", showResults);
   departuresBtn.addEventListener("click", showDepartures);
+  boardRouteOpt.addEventListener("click", () => setBoardMode("route"));
+  boardAllOpt.addEventListener("click", () => setBoardMode("all"));
   againBtn.addEventListener("click", () => {
     timePicker.scrollIntoView({ behavior: "smooth", block: "center" });
   });

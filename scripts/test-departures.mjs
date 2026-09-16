@@ -242,6 +242,118 @@ console.log("midnight boundaries");
   );
 }
 
+console.log("route-scoped board");
+{
+  // Dedicated fixture: red JSQ–WTC direct, orange JSQ–NEW–33S, and a short
+  // NEW–HOB shuttle — so to=WTC is a direct ride and to=HOB needs exactly
+  // one transfer off the orange line at Newport
+  const mkRouteLine = (name, color, stops, trips) => ({ name, color, stops, trips });
+  const mkRouteSchedule = () => {
+    const lines = [
+      mkRouteLine(
+        "Journal Square - 33 Street",
+        "#FF9900",
+        ["JSQ", "NEW", "33S"],
+        [
+          ["09:58", "10:07", "10:23"],
+          ["10:13", "10:22", "10:38"],
+        ],
+      ),
+      mkRouteLine(
+        "Newark - World Trade Center",
+        "#D93A30",
+        ["NWK", "JSQ", "WTC"],
+        [["09:50", "09:59", "10:11"]],
+      ),
+      mkRouteLine("Newport - Hoboken", "#65C100", ["NEW", "HOB"], [["10:10", "10:16"]]),
+    ];
+    return {
+      generatedAt: new Date(NOW_MS).toISOString(),
+      source: "fixture",
+      days: { weekday: lines, saturday: lines, sunday: lines },
+    };
+  };
+
+  // Direct destination: only the red train boards JSQ and reaches WTC
+  const direct = findDepartures(mkRouteSchedule(), "JSQ", M_NOW, NOW_MS, null, "WTC");
+  check(
+    "direct ride is scoped to the serving line",
+    direct.length === 1 && direct[0].depAbs === 599,
+  );
+  check("direct row carries the arrival at the destination", direct[0].arrAbs === 611);
+  check("direct row has a single leg", direct[0].legs.length === 1);
+  check("nearest-first still holds when scoped", direct[0].depAbs < M_NOW + DEPARTURES_WINDOW_MIN);
+
+  // Transfer destination: the orange 09:58 reaches NEW 10:07, transfers to
+  // the 10:10 shuttle (3 min wait = TRANSFER_MIN) and arrives HOB 10:16;
+  // the orange 10:13 misses the shuttle and the red train never reaches HOB
+  const transfer = findDepartures(mkRouteSchedule(), "JSQ", M_NOW, NOW_MS, null, "HOB");
+  check("transfer first leg is the only row", transfer.length === 1 && transfer[0].depAbs === 598);
+  check("transfer row carries the post-connection arrival", transfer[0].arrAbs === 616);
+  check("transfer row has two legs", transfer[0].legs.length === 2);
+  check(
+    "transfer row's legs board and alight at the right stops",
+    transfer[0].legs[0].board.stop === "JSQ" &&
+      transfer[0].legs[0].alight.stop === "NEW" &&
+      transfer[0].legs[1].board.stop === "NEW" &&
+      transfer[0].legs[1].alight.stop === "HOB",
+  );
+  check(
+    "a first leg whose only connection is hours out (tomorrow's table) is excluded",
+    !transfer.some((r) => r.depAbs === 613),
+  );
+
+  // Delay shifts the whole scoped row: a +5 on the red train moves both the
+  // departure and the estimated arrival
+  const lateRt = normalizeRt(
+    { fetchedAt: NOW_MS, stations: { JSQ: [entry("WTC", "D93A30", 604)] } },
+    NOW_MS,
+  );
+  const late = findDepartures(mkRouteSchedule(), "JSQ", M_NOW, NOW_MS, lateRt, "WTC");
+  check(
+    "delayed scoped row shifts departure and arrival",
+    late.length === 1 && late[0].depAbs === 604 && late[0].arrAbs === 616,
+  );
+  check("delayed scoped row stamps the leg delay", late[0].legs[0].delay === 5);
+
+  // Feed extras in the scoped board: only an entry headed to exactly the
+  // destination is provably rideable; anything else is dropped
+  const extraRt = normalizeRt(
+    {
+      fetchedAt: NOW_MS,
+      stations: {
+        JSQ: [entry("WTC", "65C100", 630), entry("33S", "FF9900", 635)],
+      },
+    },
+    NOW_MS,
+  );
+  const extras = findDepartures(mkRouteSchedule(), "JSQ", M_NOW, NOW_MS, extraRt, "WTC");
+  const wtcExtra = extras.find((r) => r.fromFeed);
+  check(
+    "extra headed to the destination is kept",
+    wtcExtra !== undefined && wtcExtra.terminus === "WTC",
+  );
+  check("kept extra has no arrival estimate", wtcExtra && wtcExtra.arrAbs === undefined);
+  check(
+    "extra headed elsewhere is dropped",
+    !extras.some((r) => r.fromFeed && r.terminus === "33S"),
+  );
+
+  // Unreachable destination: scoped board is empty while the full board at
+  // the same station still lists trains (NEW has no line reaching WTC)
+  const unreachable = findDepartures(mkRouteSchedule(), "NEW", M_NOW, NOW_MS, null, "WTC");
+  check("unreachable destination yields an empty scoped board", unreachable.length === 0);
+  const fullNew = findDepartures(mkRouteSchedule(), "NEW", M_NOW, NOW_MS, null);
+  check("full board at the same station is unaffected", fullNew.length === 3);
+
+  // Regression: the full-board call without `to` keeps its shape — no
+  // arrAbs/legs leak into plain rows
+  check(
+    "full-board rows carry no route fields",
+    fullNew.every((r) => r.arrAbs === undefined && !r.legs),
+  );
+}
+
 console.log("closed / unserved stations");
 {
   // 09 St has service in the fixture but a station nothing serves (or a

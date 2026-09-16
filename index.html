@@ -142,6 +142,18 @@
             <div class="time-view__title" id="departuresTitle"></div>
             <p class="time-view__text time-view__text_mb" id="departuresSubtitle"></p>
             <p class="live-status" id="departuresLiveStatus" hidden></p>
+            <div class="board-switch" id="boardSwitch" role="group" aria-label="Board scope">
+              <!-- Route option's label follows the current destination -->
+              <button
+                class="board-switch__opt"
+                id="boardRouteOpt"
+                type="button"
+                aria-pressed="true"
+              ></button>
+              <button class="board-switch__opt" id="boardAllOpt" type="button" aria-pressed="false">
+                All trains
+              </button>
+            </div>
             <div class="time-list" id="departuresList"></div>
             <p class="time-view__text" id="departuresError" hidden></p>
           </div>

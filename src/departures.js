@@ -1,46 +1,56 @@
 // Departure board for one station: the next trains due to leave it.
 //
-// Rows come from the timetable (yesterday/today/tomorrow tables, same
-// absolute-minute model as search.js), shifted by observed real-time delays
-// from realtime.js's buildDelays. Feed entries at the station with no
-// timetable counterpart become "live" extra rows (unscheduled trains the
-// printed timetable doesn't know about).
+// Full board: rows come from the timetable (yesterday/today/tomorrow tables
+// via search.js's collectTrips, shifted by observed real-time delays from
+// realtime.js's buildDelays). Feed entries at the station with no timetable
+// counterpart become "live" extra rows (unscheduled trains the printed
+// timetable doesn't know about).
+//
+// Route-scoped board (optional `to`): only trains that can start a viable
+// journey to `to` — the first legs of direct rides and of 1–2-transfer
+// connections, using the same connection machinery as findJourneys
+// (TRANSFER_MIN / MAX_TRANSFERS), bounded so the journey must complete
+// within MAX_JOURNEY_MIN of the first departure (the scan spans three
+// calendar-day tables; without the bound the next day's trains would pose
+// as connections). Each row carries the earliest delay-adjusted arrival at
+// `to` (arrAbs, transfer waits included) plus the reconstructed legs, so
+// the UI can show the estimated arrival and the transfer path. Feed extras
+// are kept only when their terminus is `to` itself (rideable, but no
+// arrival estimate is possible).
 //
 // Pure ES module like search.js / realtime.js: no DOM access, explicit clock
 // inputs, tested from Node (scripts/test-departures.mjs).
 
-import { dayKeyFor } from "./search.js";
+import { collectTrips, continuation, MAX_TRANSFERS, reconstruct } from "./search.js";
 import { buildDelays, FEED_TO_SCHED, MATCH_TOLERANCE_MIN } from "./realtime.js";
 
 export const DEPARTURES_WINDOW_MIN = 45; // board horizon: departures within this window of "now"
+export const MAX_JOURNEY_MIN = 120; // route-scoped cap: a connection must complete within this of its first departure
 const GRACE_MIN = 5; // a departure this recently passed still shows (the train may be running late)
-
-// "HH:MM" -> minutes since midnight (same parsing as search.js)
-function toMinutes(hhmm) {
-  return parseInt(hhmm.slice(0, 2), 10) * 60 + parseInt(hhmm.slice(3), 10);
-}
 
 // Return the board rows for `station`, sorted by nearest (delay-adjusted)
 // departure first. Each row: { line, terminus, depAbs, delay, fromFeed } —
 // `line` is null and `fromFeed` true for feed-only extras (which also carry
-// the feed's color list), `delay` is undefined for timetable-only rows.
-export function findDepartures(schedule, station, mNow, nowMs = Date.now(), rt = null) {
+// the feed's color list), `delay` is undefined for timetable-only rows. With
+// `to`, rows are scoped to trains that connect there and also carry
+// { arrAbs, legs } (see the header note).
+export function findDepartures(schedule, station, mNow, nowMs = Date.now(), rt = null, to = null) {
   const delays = rt ? buildDelays(schedule, rt, mNow, nowMs) : null;
 
-  // Departures currently in the window span three tables: yesterday's
-  // (base -1440), today's (base 0) and tomorrow's (base 1440) — a PATH table
-  // is per calendar day, so the train leaving just after midnight belongs to
-  // yesterday's table and the one about to leave after the next midnight to
-  // tomorrow's (same rationale as realtime.js's buildDelays).
+  // Delay-adjusted trips on the absolute timeline, spanning three calendar
+  // days so pre-/post-midnight departures resolve to the right table — a
+  // PATH table is per calendar day, so the train leaving just after midnight
+  // belongs to yesterday's table and the one about to leave after the next
+  // midnight to tomorrow's (same rationale as realtime.js's buildDelays)
   const today = new Date(nowMs);
   const yesterday = new Date(today);
   yesterday.setDate(yesterday.getDate() - 1);
   const tomorrow = new Date(today);
   tomorrow.setDate(tomorrow.getDate() + 1);
-  const tables = [
-    { dayKey: dayKeyFor(yesterday), base: -1440 },
-    { dayKey: dayKeyFor(today), base: 0 },
-    { dayKey: dayKeyFor(tomorrow), base: 1440 },
+  const allTrips = [
+    ...collectTrips(schedule, yesterday, -1440, delays),
+    ...collectTrips(schedule, today, 0, delays),
+    ...collectTrips(schedule, tomorrow, 1440, delays),
   ];
 
   const rows = [];
@@ -50,33 +60,60 @@ export function findDepartures(schedule, station, mNow, nowMs = Date.now(), rt =
   // unscheduled extras
   const known = []; // { depAbs, terminus, color }
 
-  for (const { dayKey, base } of tables) {
-    for (const line of schedule.days[dayKey] ?? []) {
-      const s = line.stops.indexOf(station);
-      // The line's final stop is an arrival, not a departure — terminal
-      // stations get their departures from the lines that start there
-      if (s < 0 || s === line.stops.length - 1) continue;
-      const terminus = line.stops[line.stops.length - 1];
-      const lineColor = line.color.toUpperCase();
-      for (const trip of line.trips) {
-        const mins = trip.map((t) => (t === null ? null : toMinutes(t)));
-        const first = mins.find((t) => t !== null);
-        if (first === undefined) continue;
-        const t = mins[s];
-        if (t === null) continue;
-        // Absolute minutes with the same midnight shift as search.js's
-        // collectTrips, then shifted by the trip's observed delay if any
-        const abs = base + t + (t < first ? 1440 : 0);
-        const delay = delays?.get(trip);
-        const depAbs = abs + (delay ?? 0);
-        // A timetable time already well past is gone for good — unless the
-        // train is running late enough that its adjusted time is still ahead,
-        // which the adjusted depAbs above already reflects
-        if (depAbs < mNow - GRACE_MIN) continue;
-        known.push({ depAbs, terminus, color: lineColor });
-        if (depAbs > mNow + DEPARTURES_WINDOW_MIN) continue;
-        rows.push({ line, terminus, depAbs, delay, fromFeed: false });
+  for (const trip of allTrips) {
+    const s = trip.stops.indexOf(station);
+    // The line's final stop is an arrival, not a departure — terminal
+    // stations get their departures from the lines that start there
+    if (s < 0 || s === trip.stops.length - 1) continue;
+    const depAbs = trip.times[s];
+    if (depAbs === null) continue;
+    // A timetable time already well past is gone for good — unless the train
+    // is running late enough that its adjusted time is still ahead, which
+    // the adjusted depAbs above already reflects
+    if (depAbs < mNow - GRACE_MIN) continue;
+    const delay = delays?.get(trip.raw);
+    const terminus = trip.stops[trip.stops.length - 1];
+    known.push({ depAbs, terminus, color: trip.line.color.toUpperCase() });
+    if (depAbs > mNow + DEPARTURES_WINDOW_MIN) continue;
+
+    if (to) {
+      // Scope to the current journey: keep the train only if a connection
+      // (<= MAX_TRANSFERS, >= TRANSFER_MIN waits) reaches `to` after
+      // boarding it within MAX_JOURNEY_MIN, and stamp the earliest arrival
+      // plus the legs behind it
+      const alights = new Map();
+      for (let k = s + 1; k < trip.stops.length; k++) {
+        if (trip.times[k] === null) continue;
+        alights.set(trip.stops[k], {
+          time: trip.times[k],
+          pred: { trip, board: s, alight: k, first: true },
+        });
       }
+      const best = continuation(allTrips, alights, MAX_TRANSFERS);
+      const arrival = best.get(to);
+      if (!arrival) continue;
+      // The scan spans three calendar-day tables, so without a bound a first
+      // leg would "connect" to trains many hours out (e.g. only tomorrow's
+      // shuttle) — cap the journey so a row is a connection worth boarding
+      if (arrival.time > depAbs + MAX_JOURNEY_MIN) continue;
+      const legs = reconstruct(best, station, to);
+      if (!legs) continue;
+      rows.push({
+        line: trip.line,
+        terminus,
+        depAbs,
+        delay,
+        fromFeed: false,
+        arrAbs: arrival.time,
+        legs: legs.map(({ trip: t, board, alight }) => ({
+          line: t.line,
+          board: { stop: t.stops[board], time: t.times[board] },
+          alight: { stop: t.stops[alight], time: t.times[alight] },
+          delay: delays?.get(t.raw),
+        })),
+      });
+    } else {
+      rows.push({ line: trip.line, terminus, depAbs, delay, fromFeed: false });
     }
   }
 
@@ -88,6 +125,9 @@ export function findDepartures(schedule, station, mNow, nowMs = Date.now(), rt =
     // An entry headed to this very station is an arrival here, not a
     // departure (happens at terminals, where every upcoming train is inbound)
     if (terminus === station) continue;
+    // Scoped board: an extra is only provably rideable toward `to` when it
+    // ends there — the terminus is the only stop the feed reveals
+    if (to && terminus !== to) continue;
     const projected = (e.projectedMs - midnightMs) / 60000;
     const colors = e.colors.map((c) => c.toUpperCase());
     const hasTrip = known.some(

@@ -13,10 +13,13 @@ origin and how far away each departure is from right now.
   departure time (dominated options pruned), each attributed to a specific
   first train.
 - **Live departure board** — a second button shows the next ~45 minutes of
-  trains leaving the origin station right now: real-time projected times,
-  "on time" / "+5 min" badges, struck-through timetable times, and feed-only
-  extras the printed schedule doesn't know about, sorted nearest departure
-  first and refreshed on every poll.
+  trains leaving the origin station, scoped by default to the route you
+  picked: each row is a train that gets you to your destination (direct or
+  with up to 2 transfers) with its estimated arrival there and the transfer
+  path. A **To {destination} / All trains** switch flips to the full board.
+  Real-time projected times, "on time" / "+5 min" badges, struck-through
+  timetable times, feed-only extras the printed schedule doesn't know about,
+  sorted nearest departure first and refreshed on every poll.
 - **Real-time delays** — trains observed running off-timetable (via the
   PANYNJ RidePATH feed, the same one panynj.gov uses) shift the search
   before ranking: a delayed train you can still catch stays catchable, tight
@@ -38,8 +41,11 @@ origin and how far away each departure is from right now.
 1. Pick a route (defaults to Journal Square → 9th Street).
 2. Pick the arrival time with the drum picker.
 3. Hit **Find trains** — or **Live departures** for the departure board at
-   the origin station instead (the two views swap; each has a ghost button
-   to jump back to its picker).
+   the origin station instead. The board starts scoped to the trains that
+   connect to your destination (with estimated arrivals); the
+   **To {destination} / All trains** switch above the list flips to every
+   train leaving the station. The two views swap; each has a ghost button
+   to jump back to its picker.
 
 Each result card leads with the departure and arrival times plus the total
 duration, the full itinerary with per-leg times and live status, and any
@@ -72,7 +78,10 @@ instead of an empty list.
 - `src/departures.js` builds the live departure board: the timetable's next
   ~45 minutes at the origin station, delay-adjusted by the pairing above,
   plus feed entries with no timetable counterpart as "live" extra rows;
-  nearest departure first.
+  nearest departure first. Scoped to a destination, it keeps only the first
+  legs of viable journeys there (reusing `search.js`'s connection scan,
+  capped at 2 hours end-to-end) and stamps each row with the estimated
+  arrival and the transfer path.
 - `src/app.js` is the UI; there is no framework and no build step.
 
 ## Development
@@ -117,6 +126,9 @@ commit the refreshed `data/schedule.json` when PATH announces new timetables.
   a feed entry only shows as a "live" extra when no timetable train matches
   it (same terminus, color, within the pairing tolerance) — same heuristic,
   same limits.
+- The board's estimated arrivals are the connection scan's earliest outcome
+  (up to 2 transfers, journey capped at 2 hours); an observed delay is
+  assumed to hold along the whole run, so connecting legs inherit it.
 - 9 St & 23 St stations are closed nightly 12 AM–5 AM; overnight trains skip
   them, which the schedule reflects.
 - Special-event timetables (holidays, planned outages) are not parsed — only

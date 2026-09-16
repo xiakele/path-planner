@@ -30,7 +30,8 @@ function toMinutes(hhmm) {
 // All trips of one calendar day, with stop times shifted to absolute minutes.
 // `adjust` (from realtime.js's buildDelays, keyed by the raw trip arrays)
 // optionally shifts a trip's whole run by its observed real-time delay.
-function collectTrips(schedule, date, base, adjust) {
+// Exported for departures.js's board, which reuses the same trip model.
+export function collectTrips(schedule, date, base, adjust) {
   const out = [];
   for (const line of schedule.days[dayKeyFor(date)] ?? []) {
     for (const trip of line.trips) {
@@ -48,8 +49,9 @@ function collectTrips(schedule, date, base, adjust) {
 // Relay-style relaxation: starting from `alights` (station -> arrival), find
 // the earliest reachable time at every station using at most `budget` more
 // legs. Each pass may only board trips using the previous pass's arrivals, so
-// a path can never exceed the leg budget.
-function continuation(allTrips, alights, budget) {
+// a path can never exceed the leg budget. Exported for departures.js's
+// route-scoped board, which asks the same reachability question.
+export function continuation(allTrips, alights, budget) {
   const best = new Map(); // station -> { time, pred: {trip, board, alight} | chain node }
   for (const [station, node] of alights) best.set(station, node);
 
@@ -84,8 +86,9 @@ function continuation(allTrips, alights, budget) {
   return best;
 }
 
-// Walk the predecessor chain from `to` back to the first leg's alighting node
-function reconstruct(best, from, to) {
+// Walk the predecessor chain from `to` back to the first leg's alighting
+// node. Exported for departures.js's route-scoped board (same chain walk).
+export function reconstruct(best, from, to) {
   const legs = [];
   let station = to;
   for (;;) {

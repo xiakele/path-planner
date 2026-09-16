@@ -12,11 +12,13 @@ The user-facing overview is in `README.md`.
 - `src/app.js` — all UI (route selects, drum time picker, rendering, the
   16 s real-time poll with a 1 s freshness ticker, paused in hidden tabs).
 - `src/search.js` — journey search; pure ES module with no DOM access, so it
-  can be tested directly from Node.
+  can be tested directly from Node. `collectTrips` / `continuation` /
+  `reconstruct` are exported for `departures.js`'s route-scoped board.
 - `src/realtime.js` — pairs feed entries with timetable trips into per-trip
   delays; pure like search.js, tested by `scripts/test-realtime.mjs`.
 - `src/departures.js` — live departure board at one station (timetable +
-  delay merge, feed-only extras); pure like search.js, tested by
+  delay merge, feed-only extras; optional route-scoped mode reusing
+  search.js's connection machinery); pure like search.js, tested by
   `scripts/test-departures.mjs`.
 - `api/realtime.js` — Vercel function proxying the PANYNJ RidePATH feed
   (upstream has no CORS headers); 15 s cache.
@@ -89,7 +91,16 @@ The user-facing overview is in `README.md`.
   results' latest-first ranking. A stop at a line's final station is an
   arrival, not a departure (skipped); feed entries that match no timetable
   train (same terminus, color, within `MATCH_TOLERANCE_MIN`) become
-  "live" extra rows with `line: null`. In `src/app.js` the results and
-  departures sections are mutually exclusive views; hidden sections
+  "live" extra rows with `line: null`. The optional 6th arg `to` scopes
+  the board to a destination: rows are first legs of journeys there
+  (direct or ≤ `MAX_TRANSFERS`, via `search.js`'s exported
+  `continuation`/`reconstruct`) carrying `arrAbs` + `legs`; journeys must
+  complete within `MAX_JOURNEY_MIN` (120) of the first departure — the
+  scan spans three calendar-day tables, and without the cap the next
+  day's trains would pose as connections. Scoped extras are gated on
+  `terminus === to`. In `src/app.js` the results and departures sections
+  are mutually exclusive views; the board opens in route-scoped mode and
+  resets to it on every fresh open, while the scope switch and the poll
+  re-render preserve the chosen mode. Hidden sections
   collapse via `height: 0` (see `.results.content-section_hidden`) so the
   visible one reclaims the space — keep that when adding more views.
