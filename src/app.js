@@ -488,22 +488,28 @@ function renderDepartures(board) {
     // that isn't itself headed to the destination still makes sense
     let transfers = "";
     if (row.legs && row.legs.length > 1) {
-      transfers = `<div class="time-list__legs">${row.legs
+      transfers = row.legs
         .slice(0, -1)
         .map((leg, li) => {
           const nextLeg = row.legs[li + 1];
           const wait = Math.round(nextLeg.board.time - leg.alight.time);
           return `<div class="time-list__transfer">transfer at ${STATIONS[leg.alight.stop]} to ${lineShortName(nextLeg.line)} · wait ${wait} min</div>`;
         })
-        .join("")}</div>`;
+        .join("");
     }
+    // Line identity (chip + name + badge) on its own row under the headline
+    // times, transfers tucked beneath it — same shape as the result cards
     item.innerHTML = `
       <div class="time-list__main">
         <span class="time-list__text">${fmtTime(row.depAbs)}${was}${next}</span>${arrHtml}
-        ${chip}<span class="line-name">${name}</span>
-        ${badge}
       </div>
-      ${transfers}
+      <div class="time-list__legs">
+        <div class="leg-head board-line">
+          ${chip}<span class="line-name">${name}</span>
+          ${badge}
+        </div>
+        ${transfers}
+      </div>
       <div class="offset">${departed ? "" : "departs "}${offsetText(row.depAbs, mNow)}</div>
     `;
     departuresList.appendChild(item);

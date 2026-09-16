@@ -434,11 +434,30 @@ select:focus-visible {
   color: var(--text-muted);
 }
 
-/* On the departure board the line name sits in the headline row next to the
-   time, so it reads as a primary identity, not a leg footnote */
-.time-list__main .line-name {
+/* On the departure board the line identity (chip + name + badge) sits on
+   its own row under the headline times — prominent, but a step below the
+   times themselves */
+.board-line {
+  font-size: 0.9em;
+}
+
+.board-line .line-name {
   color: #fff;
   font-weight: 600;
+}
+
+/* Desktop density: the board's stacked rows are short, so the card's 1em row
+   gap reads as dead space between them — tighten it and let the line
+   identity sit at full size so the cards fill out. Scoped to the board (the
+   journey result cards keep their roomier rhythm); mobile keeps the base */
+@media (min-width: 481px) {
+  #departuresList .time-list__item {
+    gap: 0.45em;
+  }
+
+  #departuresList .board-line {
+    font-size: 1em;
+  }
 }
 
 .time-list__main {
@@ -517,7 +536,7 @@ select:focus-visible {
 }
 
 .time-list__transfer {
-  font-size: 0.72em;
+  font-size: 0.8em;
   color: var(--text-muted);
   padding-left: 1.2em;
 }
