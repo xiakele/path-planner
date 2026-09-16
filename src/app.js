@@ -71,6 +71,13 @@ const departuresAgainBtn = document.getElementById("departuresAgainBtn");
 const boardRouteOpt = document.getElementById("boardRouteOpt");
 const boardAllOpt = document.getElementById("boardAllOpt");
 const fetchedDate = document.getElementById("fetchedDate");
+// Stop detail popup, shared by the journey cards and the board rows (one
+// dialog at page level, filled per click — see the popup section below)
+const popup = document.getElementById("popup");
+const popupBackdrop = document.getElementById("popupBackdrop");
+const popupTitle = document.getElementById("popupTitle");
+const popupBody = document.getElementById("popupBody");
+const popupClose = document.getElementById("popupClose");
 
 // ---------- helpers ----------
 
@@ -298,6 +305,183 @@ function tickStatus() {
   for (const el of visibleStatusEls()) updateLiveStatus(el);
 }
 
+// ---------- stop detail popup ----------
+
+// Open popup state: { kind: "journey" | "departure", key, item, listEl,
+// restoreFocus } — `key` identifies the train across list re-renders, `item`
+// is the journey/row currently displayed
+let popupState = null;
+
+// Journey results dedupe per departure minute, so depAbs alone identifies a
+// card within one query; on the board two trains can share a departure
+// minute, so the terminus and line color disambiguate
+function journeyKey(j) {
+  return String(j.depAbs);
+}
+
+function departureKey(row) {
+  return `${row.depAbs}|${row.terminus}|${row.line ? row.line.color : "feed"}`;
+}
+
+// "(next day)" tag for absolute minutes past midnight — same convention the
+// cards use for their headline times
+function nextDayTag(t) {
+  return t >= 1440 ? " <span class='time-nextday'>(next day)</span>" : "";
+}
+
+// One stop row of the timeline: colored dot, station name and its
+// (delay-adjusted) ETA, with the timetable "was" struck through when the
+// leg's train runs off-timetable. Origin/destination rows get highlighted.
+function stopRow(stop, time, delay, color, endpoint) {
+  const was = delay ? ` <s class="leg-was">${fmtTime(time - delay)}</s>` : "";
+  const style = color ? ` style="--c:${color}"` : "";
+  return `
+      <div class="popup__stop${endpoint ? " popup__stop_endpoint" : ""}"${style}>
+        <span class="popup__dot"></span>
+        <span class="popup__name">${STATIONS[stop] ?? stop}</span>
+        <span class="popup__time"><b>${fmtTime(time)}</b>${was}${nextDayTag(time)}</span>
+      </div>`;
+}
+
+// Timeline for a chain of legs: each leg's identity row (chip + short name +
+// live badge) followed by its stops with ETAs. A transfer station appears
+// twice — arrival row closing the previous leg, departure row opening the
+// next — with the "change to …" row between them, so the stated wait is
+// verifiable against the on-screen times.
+function legsTimelineHtml(legs) {
+  let html = "";
+  legs.forEach((leg, li) => {
+    if (li > 0) {
+      const wait = Math.round(leg.board.time - legs[li - 1].alight.time);
+      html += `<div class="popup__transfer">change to ${lineShortName(leg.line)} · wait ${wait} min</div>`;
+    }
+    const last = li === legs.length - 1;
+    html += `
+      <div class="popup__leg">
+        <div class="leg-head">
+          <span class="line-chip" style="--c:${leg.line.color}"></span>
+          <span class="line-name">${lineShortName(leg.line)}</span>
+          ${delayBadge(leg.delay)}
+        </div>
+        ${leg.stops
+          .map((s, si) => {
+            const endpoint = (li === 0 && si === 0) || (last && si === leg.stops.length - 1);
+            return stopRow(s.stop, s.time, leg.delay, leg.line.color, endpoint);
+          })
+          .join("")}
+      </div>`;
+  });
+  return html;
+}
+
+// Journey result card: the headline mirrors the card itself (departure →
+// arrival, "was" times struck through, "(next day)" tags, total duration),
+// the body is the stop-by-stop timeline
+function renderJourneyPopup(journey) {
+  const { legs, depAbs, arrAbs } = journey;
+  const depDelay = legs[0]?.delay;
+  const arrDelay = legs[legs.length - 1]?.delay;
+  const depWas = depDelay ? ` <s class="dep-was">${fmtTime(depAbs - depDelay)}</s>` : "";
+  const arrWas = arrDelay ? ` <s class="arr-was">${fmtTime(arrAbs - arrDelay)}</s>` : "";
+  popupTitle.innerHTML = `
+    <b>${fmtTime(depAbs)}</b>${depWas}${nextDayTag(depAbs)}
+    <span class="arrow">→</span>
+    <b>${fmtTime(arrAbs)}</b>${arrWas}${nextDayTag(arrAbs)}
+    <span class="dep-station">· ${fmtDur(arrAbs - depAbs)}</span>`;
+  popupBody.innerHTML = legsTimelineHtml(legs);
+}
+
+// Departure board row: route-scoped rows and all-trains rows both carry
+// legs (a connection path, or the single remaining ride to the terminus) and
+// get the full timeline; feed-only extras have no timetable behind them, so
+// the popup notes that instead of listing stops
+function renderDeparturePopup(row) {
+  const was = row.delay ? ` <s class="dep-was">${fmtTime(row.depAbs - row.delay)}</s>` : "";
+  let arrHtml = "";
+  if (row.arrAbs !== undefined) {
+    const arrDelay = row.legs[row.legs.length - 1]?.delay;
+    const arrWas = arrDelay ? ` <s class="arr-was">${fmtTime(row.arrAbs - arrDelay)}</s>` : "";
+    arrHtml = ` <span class="arrow">→</span> <b>${fmtTime(row.arrAbs)}</b>${arrWas}${nextDayTag(row.arrAbs)} <span class="dep-station">· ${fmtDur(row.arrAbs - row.depAbs)}</span>`;
+  }
+  const terminusName = STATIONS[row.terminus] ?? row.terminus;
+  if (row.fromFeed) {
+    popupTitle.innerHTML = `<b>${fmtTime(row.depAbs)}</b>${nextDayTag(row.depAbs)} <span class="arrow">→</span> <b>to ${terminusName}</b>`;
+    popupBody.innerHTML = `
+      <div class="leg-head board-line">
+        <span class="line-chip line-chip_feed" style="--c:${row.colors?.[0] ?? ""}"></span>
+        <span class="line-name">to ${terminusName}</span>
+        <span class="leg-badge leg-badge_live">live</span>
+      </div>
+      <p class="popup__note">Live-only train — no timetable behind it, so intermediate stops and ETAs are unavailable. It's bound for ${terminusName}.</p>`;
+    return;
+  }
+  // All-trains rows have no destination arrival to headline — name the
+  // terminus instead, matching the card's own line identity ("to …")
+  const dirHtml = arrHtml || ` <span class="arrow">→</span> <b>to ${terminusName}</b>`;
+  popupTitle.innerHTML = `<b>${fmtTime(row.depAbs)}</b>${was}${nextDayTag(row.depAbs)}${dirHtml}`;
+  popupBody.innerHTML = legsTimelineHtml(row.legs);
+}
+
+function renderPopupContent() {
+  // Keep the scroll position across live-updates (the body scrolls when the
+  // timeline outgrows the card, bottom-sheet style on small screens)
+  const scrollTop = popupBody.scrollTop;
+  if (popupState.kind === "journey") renderJourneyPopup(popupState.item);
+  else renderDeparturePopup(popupState.item);
+  popupBody.scrollTop = scrollTop;
+}
+
+function openPopup(kind, item, key, listEl) {
+  popupState = { kind, key, item, listEl, restoreFocus: document.activeElement };
+  renderPopupContent();
+  popup.hidden = false;
+  popupClose.focus();
+}
+
+function closePopup() {
+  if (!popupState) return;
+  const { restoreFocus, listEl } = popupState;
+  popupState = null;
+  popup.hidden = true;
+  // The lists re-render on every poll, so the card that opened the popup may
+  // already be gone — then park focus on the list it came from instead
+  if (restoreFocus && restoreFocus.isConnected) {
+    restoreFocus.focus();
+  } else if (listEl) {
+    listEl.tabIndex = -1; // make the list focusable just for this handoff
+    listEl.focus({ preventScroll: true });
+  }
+}
+
+// Live-update hook, called at the end of every list render (poll re-renders
+// and board scope switches): when the popup is open over this list, find the
+// same train in the fresh data and re-render its content in place, so delays
+// stay current; a train that left the list closes the popup
+function syncPopup(kind, items, keyOf) {
+  if (!popupState || popupState.kind !== kind) return;
+  const next = items.find((it) => keyOf(it) === popupState.key);
+  if (!next) {
+    closePopup();
+    return;
+  }
+  popupState.item = next;
+  renderPopupContent();
+}
+
+// Turn a result/board card into a button that opens the stop popup
+function makeClickable(item, open) {
+  item.classList.add("time-list__item_clickable");
+  item.setAttribute("role", "button");
+  item.setAttribute("tabindex", "0");
+  item.addEventListener("click", open);
+  item.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      open();
+    }
+  });
+}
+
 // ---------- rendering ----------
 
 function renderResults(from, to, targetMinutes) {
@@ -306,6 +490,9 @@ function renderResults(from, to, targetMinutes) {
   // catchability, transfers and arrivals reflect real-time reality
   const adjust = buildDelays(schedule, rt, mNow);
   const journeys = findJourneys(schedule, from, to, targetMinutes, mNow, adjust);
+  // If the stop popup is open over this list, move it onto the fresh
+  // journeys (a train that vanished closes it) — see syncPopup
+  syncPopup("journey", journeys, journeyKey);
   const dayLabel = new Date().toLocaleDateString("en-US", { weekday: "long" });
 
   // Keep the freshness pill in step with whatever is on screen (the 1 s
@@ -385,6 +572,8 @@ function renderResults(from, to, targetMinutes) {
       </div>
       <div class="offset">${departed ? "" : "departs "}${offsetText(depAbs, mNow)}</div>
     `;
+    // The whole card opens the stop-by-stop popup (click or Enter/Space)
+    makeClickable(item, () => openPopup("journey", journey, journeyKey(journey), resultList));
     resultList.appendChild(item);
   });
 }
@@ -421,6 +610,9 @@ function renderDepartures(board) {
     mode === "route"
       ? findDepartures(schedule, station, mNow, Date.now(), rt, to)
       : findDepartures(schedule, station, mNow, Date.now(), rt);
+  // If the stop popup is open over this list, move it onto the fresh rows (a
+  // train that left the window closes it) — see syncPopup
+  syncPopup("departure", rows, departureKey);
   const dayLabel = new Date().toLocaleDateString("en-US", { weekday: "long" });
 
   // Keep the freshness pill in step with whatever is on screen (the 1 s
@@ -512,6 +704,9 @@ function renderDepartures(board) {
       </div>
       <div class="offset">${departed ? "" : "departs "}${offsetText(row.depAbs, mNow)}</div>
     `;
+    // The whole card opens the stop-by-stop popup (click or Enter/Space);
+    // feed-only extras open it too, with a "no timetable" note instead of stops
+    makeClickable(item, () => openPopup("departure", row, departureKey(row), departuresList));
     departuresList.appendChild(item);
   }
 }
@@ -610,6 +805,18 @@ async function boot() {
   departuresBtn.addEventListener("click", showDepartures);
   boardRouteOpt.addEventListener("click", () => setBoardMode("route"));
   boardAllOpt.addEventListener("click", () => setBoardMode("all"));
+  // Stop popup: backdrop or ✕ dismisses it; Esc closes and Tab stays inside
+  // the dialog (the close button is its only control)
+  popupBackdrop.addEventListener("click", closePopup);
+  popupClose.addEventListener("click", closePopup);
+  document.addEventListener("keydown", (e) => {
+    if (!popupState) return;
+    if (e.key === "Escape") closePopup();
+    else if (e.key === "Tab") {
+      e.preventDefault();
+      popupClose.focus();
+    }
+  });
   againBtn.addEventListener("click", () => {
     timePicker.scrollIntoView({ behavior: "smooth", block: "center" });
   });

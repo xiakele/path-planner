@@ -686,6 +686,209 @@ select:focus-visible {
   background-color: rgba(245, 214, 123, 0.08);
 }
 
+/* ---------- stop detail popup ---------- */
+
+/* Clickable result/board cards: a transparent base border keeps the hover
+   state from shifting layout; the gold ring marks the affordance */
+.time-list__item_clickable {
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition:
+    border-color 0.2s,
+    background-color 0.2s;
+}
+
+.time-list__item_clickable:hover,
+.time-list__item_clickable:focus-visible {
+  border-color: rgba(245, 214, 123, 0.55);
+  outline: none;
+}
+
+.time-list__item_clickable:focus-visible {
+  background-color: #2b3360;
+}
+
+/* One dialog at page level, filled per click (see app.js): centered card on
+   desktop, bottom sheet on small screens */
+.popup {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5em 1em;
+}
+
+.popup[hidden] {
+  display: none;
+}
+
+.popup__backdrop {
+  position: absolute;
+  inset: 0;
+  background-color: rgba(6, 9, 26, 0.75);
+}
+
+.popup__card {
+  position: relative;
+  width: 100%;
+  max-width: 26em;
+  max-height: min(85vh, 42em);
+  overflow-y: auto;
+  background-color: #141b3f;
+  border: 1px solid #2c3560;
+  border-radius: 13px;
+  padding: 1.1em 1.25em 1.25em;
+  box-shadow: 0 10px 40px -10px rgba(0, 0, 0, 0.6);
+  animation: popup-in 0.22s ease;
+}
+
+@keyframes popup-in {
+  from {
+    opacity: 0;
+    transform: translateY(1.2em);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.popup__close {
+  position: absolute;
+  top: 0.7em;
+  right: 0.7em;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.1em;
+  height: 2.1em;
+  color: var(--text-muted);
+  background: none;
+  border: 1px solid var(--text-dim);
+  border-radius: 50%;
+  cursor: pointer;
+  outline: none;
+  transition:
+    color 0.2s,
+    border-color 0.2s;
+}
+
+.popup__close:hover,
+.popup__close:focus-visible {
+  color: #f5d67b;
+  border-color: #f5d67b;
+}
+
+/* Headline mirrors the card it opened: departure → arrival with the same
+   accent arrow, "was" times and duration */
+.popup__title {
+  color: #fff;
+  font-size: 1.1em;
+  font-weight: 700;
+  padding-right: 2.6em; /* clear of the close button */
+  margin-bottom: 0.8em;
+}
+
+.popup__title .arrow {
+  color: #f5d67b;
+  font-weight: 700;
+}
+
+.popup__title .dep-station {
+  font-size: 0.75em;
+}
+
+.popup__body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55em;
+}
+
+.popup__leg {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2em;
+}
+
+/* Stop rows: line-colored dot, station name, right-aligned ETA. The name and
+   time align on the text baseline, the dot centers itself in the row */
+.popup__stop {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6em;
+  padding: 0.14em 0;
+  font-size: 0.92em;
+}
+
+.popup__dot {
+  width: 0.55em;
+  height: 0.55em;
+  border-radius: 50%;
+  background-color: var(--c, var(--text-dim));
+  flex-shrink: 0;
+  align-self: center;
+}
+
+.popup__name {
+  color: var(--text-muted);
+  flex: 1;
+  min-width: 0;
+}
+
+.popup__time {
+  white-space: nowrap;
+}
+
+.popup__time b {
+  color: #fff;
+  font-weight: 600;
+}
+
+/* Origin and final destination pop out of the timeline */
+.popup__stop_endpoint .popup__name {
+  color: #fff;
+  font-weight: 700;
+}
+
+.popup__stop_endpoint .popup__dot {
+  box-shadow: 0 0 0 2px rgba(245, 214, 123, 0.35);
+}
+
+/* "Change to …" between legs — reads like the cards' transfer rows */
+.popup__transfer {
+  font-size: 0.8em;
+  color: var(--text-muted);
+  padding-left: 1.2em;
+}
+
+.popup__transfer::before {
+  content: "↳ ";
+}
+
+/* Feed-only trains have no stops to list — explain instead */
+.popup__note {
+  color: var(--text-faint);
+  font-size: 0.85em;
+  line-height: 1.5;
+  margin-top: 0.35em;
+}
+
+/* Small screens: the dialog docks as a bottom sheet across the full width */
+@media (max-width: 480px) {
+  .popup {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .popup__card {
+    max-width: 100%;
+    border-radius: 13px 13px 0 0;
+  }
+}
+
 /* ---------- footer ---------- */
 
 .footer {

@@ -109,6 +109,22 @@ console.log("window filtering & ordering");
     "terminus is the line's last stop",
     rows.every((r) => r.terminus === "33S" || r.terminus === "WTC"),
   );
+  // All-trains rows carry the ride itself as a single leg (station →
+  // terminus) so their cards open the stop-by-stop popup too
+  const orange = rows.find((r) => r.line.color === "#FF9900" && r.depAbs === 598);
+  check(
+    "all-trains row has one leg spanning station → terminus",
+    orange &&
+      orange.legs.length === 1 &&
+      orange.legs[0].board.stop === "JSQ" &&
+      orange.legs[0].alight.stop === "33S",
+  );
+  check(
+    "all-trains leg lists every called stop with its time",
+    orange &&
+      orange.legs[0].stops.map((s) => `${s.stop}@${s.time}`).join(",") ===
+        "JSQ@598,GRO@602,NEW@607,CHR@612,09S@615,14S@617,23S@619,33S@623",
+  );
 }
 
 console.log("grace window");
@@ -142,6 +158,12 @@ console.log("delay-adjusted board");
   check("delayed train shows the adjusted departure", red && red.depAbs === 607);
   check("row carries the observed delay", red && red.delay === 8);
   check(
+    "all-trains leg stops are delay-adjusted",
+    red &&
+      red.legs[0].stops.map((s) => `${s.stop}@${s.time}`).join(",") ===
+        "JSQ@607,GRO@611,EXC@615,WTC@619",
+  );
+  check(
     "a delayed train still sorts by its adjusted time",
     rows.map((r) => r.depAbs).join(",") === "598,607,613",
   );
@@ -169,6 +191,7 @@ console.log("feed-only extras");
   );
   check("extra carries the projected minute", extra && extra.depAbs === 630);
   check("extra keeps the feed colors for the chip", extra && extra.colors.join(",") === "#65C100");
+  check("extra carries no legs — nothing to unfold", extra && extra.legs === undefined);
   check(
     "extra sorts into the board by its projected time",
     rows.map((r) => r.depAbs).join(",") === "598,599,613,630",
@@ -190,6 +213,66 @@ console.log("feed-only extras");
   check(
     "its feed entry is not misread as an extra",
     !rows2.some((r) => r.fromFeed && r.depAbs === 655),
+  );
+}
+
+console.log("same-minute collision collapse");
+{
+  // One train's entries at consecutive stations, but a trip pairs with at
+  // most one entry: T2 (10:14) claims its JSQ entry on time, and the
+  // leftover GRO entry — T2's own time there — is claimed by T1 (10:04) as
+  // +10, landing both trains on the same adjusted departure minute. The
+  // board must collapse them into a single row (the journey results already
+  // dedupe per departure minute), keeping the on-time one
+  const lines = [
+    mkLine(
+      "Journal Square - World Trade Center",
+      "#FF9900",
+      ["JSQ", "GRO", "WTC"],
+      [
+        ["10:04", "10:10", "10:20"], // T1: JSQ 604, GRO 610
+        ["10:14", "10:20", "10:30"], // T2: JSQ 614, GRO 620
+      ],
+    ),
+  ];
+  const sched = {
+    generatedAt: new Date(NOW_MS).toISOString(),
+    source: "fixture",
+    days: { weekday: lines, saturday: lines, sunday: lines },
+  };
+  const rt = normalizeRt(
+    {
+      fetchedAt: NOW_MS,
+      stations: {
+        JSQ: [entry("WTC", "FF9900", 614)], // T2 on time at JSQ
+        GRO: [entry("WTC", "FF9900", 620)], // T2 on time at GRO -> leftover for T1
+      },
+    },
+    NOW_MS,
+  );
+
+  // Without live data both trains show at their timetable minutes
+  const plain = findDepartures(sched, "JSQ", M_NOW, NOW_MS, null);
+  check(
+    "two distinct minutes without live data",
+    plain.map((r) => r.depAbs).join(",") === "604,614",
+  );
+
+  // With the pairing, T1 shifts onto T2's minute: one row, on time
+  const rows = findDepartures(sched, "JSQ", M_NOW, NOW_MS, rt);
+  check("collision collapses to a single row", rows.filter((r) => r.depAbs === 614).length === 1);
+  check("the kept row is the on-time one", rows.find((r) => r.depAbs === 614).delay === 0);
+  check("the phantom-late duplicate is gone", !rows.some((r) => r.delay === 10));
+
+  // Same collapse in route-scoped mode (both trains are direct rides to WTC)
+  const scoped = findDepartures(sched, "JSQ", M_NOW, NOW_MS, rt, "WTC");
+  check(
+    "scoped board collapses the collision too",
+    scoped.length === 1 && scoped[0].depAbs === 614,
+  );
+  check(
+    "kept scoped row is on time with its arrival",
+    scoped[0].delay === 0 && scoped[0].arrAbs === 630,
   );
 }
 
@@ -299,6 +382,11 @@ console.log("route-scoped board");
       transfer[0].legs[1].alight.stop === "HOB",
   );
   check(
+    "scoped legs carry their per-stop sequences",
+    transfer[0].legs[0].stops.map((s) => `${s.stop}@${s.time}`).join(",") === "JSQ@598,NEW@607" &&
+      transfer[0].legs[1].stops.map((s) => `${s.stop}@${s.time}`).join(",") === "NEW@610,HOB@616",
+  );
+  check(
     "a first leg whose only connection is hours out (tomorrow's table) is excluded",
     !transfer.some((r) => r.depAbs === 613),
   );
@@ -346,11 +434,16 @@ console.log("route-scoped board");
   const fullNew = findDepartures(mkRouteSchedule(), "NEW", M_NOW, NOW_MS, null);
   check("full board at the same station is unaffected", fullNew.length === 3);
 
-  // Regression: the full-board call without `to` keeps its shape — no
-  // arrAbs/legs leak into plain rows
+  // Regression: the full-board call without `to` keeps its shape — no arrAbs
+  // leaks into plain rows; their single leg is the ride itself (for the
+  // popup), not a route connection
   check(
-    "full-board rows carry no route fields",
-    fullNew.every((r) => r.arrAbs === undefined && !r.legs),
+    "full-board rows carry no arrival estimate",
+    fullNew.every((r) => r.arrAbs === undefined),
+  );
+  check(
+    "full-board rows carry exactly one leg to the terminus",
+    fullNew.every((r) => r.legs.length === 1 && r.legs[0].alight.stop === r.terminus),
   );
 }
 

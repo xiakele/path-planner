@@ -11,6 +11,8 @@ import {
   buildDelays,
   normalizeRt,
   MATCH_TOLERANCE_MIN,
+  MAX_EARLY_MIN,
+  DUPLICATE_ENTRY_MIN,
   RT_HORIZON_MIN,
   STALE_AFTER_MS,
 } from "../src/realtime.js";
@@ -209,6 +211,75 @@ const jsq33 = schedule.days.weekday[2];
   const delays = buildDelays(dup, rt, M_NOW, NOW_MS);
   check("nearer trip claims the entry", delays.get(dup.days.weekday[0].trips[1]) === 1);
   check("other trip stays unpaired", !delays.has(dup.days.weekday[0].trips[0]));
+}
+
+console.log("no-early clamp");
+{
+  // Trains never meaningfully run early (PANYNJ allows ~3 min): a pairing on
+  // the early side beyond MAX_EARLY_MIN is a misread — typically a leftover
+  // duplicate listing posing as the next trip — and must not become a
+  // phantom "N min early" delay
+  check("early clamp constant is at most 3", MAX_EARLY_MIN <= 3);
+  const early = mkSchedule();
+  early.days.weekday[0].trips = [["10:04", "10:10", "10:15", "10:19"]]; // NEW 610
+  const rt = normalizeRt(
+    { fetchedAt: NOW_MS, stations: { NEW: [entry("WTC", "65C100", 600)] } }, // 10 min "early"
+    NOW_MS,
+  );
+  const delays = buildDelays(early, rt, M_NOW, NOW_MS);
+  check(
+    "no pairing on the early side beyond the clamp",
+    !delays.has(early.days.weekday[0].trips[0]),
+  );
+  // A couple of minutes early is plausible and still pairs
+  const rt2 = normalizeRt(
+    { fetchedAt: NOW_MS, stations: { NEW: [entry("WTC", "65C100", 608)] } }, // 2 min early
+    NOW_MS,
+  );
+  const delays2 = buildDelays(early, rt2, M_NOW, NOW_MS);
+  check(
+    "slightly early pairings survive the clamp",
+    delays2.get(early.days.weekday[0].trips[0]) === -2,
+  );
+}
+
+console.log("duplicate feed listings collapse");
+{
+  // The same physical train listed twice at one station (same terminus, a
+  // shared color, within DUPLICATE_ENTRY_MIN) collapses in normalizeRt —
+  // otherwise the leftover copy pairs with the neighboring timetable trip
+  // and poses as a phantom train
+  check("duplicate window constant is at most 2", DUPLICATE_ENTRY_MIN <= 2);
+  const raw = {
+    fetchedAt: NOW_MS,
+    stations: { NEW: [entry("WTC", "65C100", 612), entry("WTC", "#65C100", 613)] },
+  };
+  const rt = normalizeRt(raw, NOW_MS);
+  check("duplicate listings collapse to one entry", rt.stations.NEW.length === 1);
+
+  // Two genuinely distinct lines toward the same terminus share no color
+  // and must never merge (green HOB–WTC and red NWK–WTC both call at EXC)
+  const raw2 = {
+    fetchedAt: NOW_MS,
+    stations: { EXP: [entry("WTC", "65C100", 610), entry("WTC", "D93A30", 610)] },
+  };
+  const rt2 = normalizeRt(raw2, NOW_MS);
+  check("distinct same-terminus lines stay separate", rt2.stations.EXC.length === 2);
+
+  // End to end: with the copies collapsed, the green trip timetabled at
+  // 10:01 must stay unpaired instead of claiming the leftover (+11 phantom
+  // "late"); only the 10:11 trip — the entry's real owner — pairs
+  const pair = mkSchedule();
+  pair.days.weekday[0].trips = [
+    ["09:55", "10:01", "10:06", "10:10"], // NEW 601
+    ["10:05", "10:11", "10:16", "10:20"], // NEW 611
+  ];
+  const delays = buildDelays(pair, rt, M_NOW, NOW_MS);
+  check(
+    "the earlier trip does not claim the leftover copy",
+    !delays.has(pair.days.weekday[0].trips[0]),
+  );
+  check("the entry's owner still pairs", delays.get(pair.days.weekday[0].trips[1]) === 1);
 }
 
 console.log("findJourneys + real-time adjustments");

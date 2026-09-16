@@ -10,10 +10,12 @@ lives in `src/`, schedule data in `data/`, the real-time proxy in `api/`.
 The user-facing overview is in `README.md`.
 
 - `src/app.js` — all UI (route selects, drum time picker, rendering, the
-  16 s real-time poll with a 1 s freshness ticker, paused in hidden tabs).
+  16 s real-time poll with a 1 s freshness ticker, paused in hidden tabs;
+  the click-through stop popup shared by results and the board).
 - `src/search.js` — journey search; pure ES module with no DOM access, so it
   can be tested directly from Node. `collectTrips` / `continuation` /
-  `reconstruct` are exported for `departures.js`'s route-scoped board.
+  `reconstruct` / `toLeg` are exported for `departures.js`'s board and the
+  UI's leg rendering.
 - `src/realtime.js` — pairs feed entries with timetable trips into per-trip
   delays; pure like search.js, tested by `scripts/test-realtime.mjs`.
 - `src/departures.js` — live departure board at one station (timetable +
@@ -80,11 +82,15 @@ The user-facing overview is in `README.md`.
   `GRO`/`EXC`), `lineColor` may be a comma list for combined services, and
   there are no trip IDs — pairing is nearest-projected-arrival per
   (station, terminus, color) with a greedy global match
-  (`src/realtime.js`). `findJourneys` takes the resulting delay Map as an
-  optional 6th arg and stamps `delay` on each leg (undefined = timetable
-  only, 0 = on time). Legs/`depAbs`/`arrAbs` are then already
-  delay-adjusted — render them as-is and derive "was" times as
-  `time - delay`.
+  (`src/realtime.js`). Two mispair guards sit on top: duplicate listings of
+  one train (same terminus, shared color, within `DUPLICATE_ENTRY_MIN`)
+  collapse in `normalizeRt`, and pairings that would make a trip leave more
+  than `MAX_EARLY_MIN` (3) early are rejected — trains never meaningfully
+  run early, so those are always misreads. `findJourneys` takes the
+  resulting delay Map as an optional 6th arg and stamps `delay` on each leg
+  (undefined = timetable only, 0 = on time). Legs/`depAbs`/`arrAbs` are
+  then already delay-adjusted — render them as-is and derive "was" times
+  as `time - delay`.
 - Departure board (`src/departures.js`): rows are the delay-adjusted
   timetable departures at the station within `DEPARTURES_WINDOW_MIN` (45)
   of now, **nearest departure first** — the opposite of the journey
@@ -98,8 +104,20 @@ The user-facing overview is in `README.md`.
   complete within `MAX_JOURNEY_MIN` (120) of the first departure — the
   scan spans three calendar-day tables, and without the cap the next
   day's trains would pose as connections. Scoped extras are gated on
-  `terminus === to`. In `src/app.js` the results and departures sections
-  are mutually exclusive views; the board opens in route-scoped mode and
+  `terminus === to`. Every timetable row (scoped or not) carries `legs`
+  built by search.js's exported `toLeg`, each leg with per-stop
+  `{stop, time}` pairs (delay-adjusted, skipped stops omitted) — scoped rows
+  the connection path, all-trains rows the single remaining ride to the
+  terminus; these power the click-through stop popup in `src/app.js` (one
+  page-level dialog, live-refreshed by `syncPopup` on each re-render, closed
+  when its train leaves the list). Feed-only extras carry no legs — their
+  popup shows a no-timetable note instead. Timetable rows that land on the
+  same adjusted departure minute (same line and terminus — a delayed train
+  catching its line-mate, or a residual mispair) collapse into one row, the
+  more plausible surviving (no badge → smaller |delay| → earlier scoped
+  arrival), mirroring the results' per-minute dedupe. In `src/app.js` the
+  results and departures sections are mutually exclusive views; the board opens in
+  route-scoped mode and
   resets to it on every fresh open, while the scope switch and the poll
   re-render preserve the chosen mode. Hidden sections
   collapse via `height: 0` (see `.results.content-section_hidden`) so the

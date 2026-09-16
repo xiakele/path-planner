@@ -111,5 +111,31 @@ console.log("truly impossible deadline returns zero");
   check("no journeys", js.length === 0);
 }
 
+console.log("leg stop sequences");
+{
+  // Legs carry every called stop between boarding and alighting with its
+  // absolute (delay-adjusted) time — the fuel for the stop-by-stop popup.
+  // A null stop time means the train skips that station: omitted.
+  const sched = mkSchedule();
+  // The 10:00 trip skips EXC and runs +5 (feed-observed) — NEW 10:11, WTC 10:20
+  sched.days.weekday[0].trips[1] = ["10:00", "10:06", null, "10:15"];
+  const adjust = new Map([[sched.days.weekday[0].trips[1], 5]]);
+  const js = findJourneys(sched, "NEW", "WTC", 625, 600, adjust);
+  check("one delay-adjusted journey", js.length === 1 && js[0].depAbs === 611);
+  const leg = js[0].legs[0];
+  check("leg stamps the trip's delay", leg.delay === 5);
+  check(
+    "stops list the called stops only, delay-adjusted",
+    leg.stops.map((s) => `${s.stop}@${s.time}`).join(",") === "NEW@611,WTC@620",
+  );
+  check(
+    "board/alight agree with the first/last stop rows",
+    leg.board.stop === "NEW" &&
+      leg.board.time === 611 &&
+      leg.alight.stop === "WTC" &&
+      leg.alight.time === 620,
+  );
+}
+
 console.log(`${checks - failures}/${checks} checks passed`);
 process.exit(failures ? 1 : 0);

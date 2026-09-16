@@ -86,6 +86,28 @@ export function continuation(allTrips, alights, budget) {
   return best;
 }
 
+// One reconstructed leg ({trip, board, alight}) in the shape the UI uses:
+// line identity, endpoints, the trip's observed real-time delay (undefined =
+// no live match) and every stop the train actually calls at between boarding
+// and alighting, each with its (delay-adjusted) time — the fuel for the
+// stop-by-stop popup. Stops with a null time (stations this trip skips) are
+// omitted. Exported for departures.js, which builds the same legs for its
+// route-scoped board.
+export function toLeg({ trip: t, board, alight }, adjust) {
+  const stops = [];
+  for (let k = board; k <= alight; k++) {
+    if (t.times[k] === null) continue;
+    stops.push({ stop: t.stops[k], time: t.times[k] });
+  }
+  return {
+    line: t.line,
+    board: { stop: t.stops[board], time: t.times[board] },
+    alight: { stop: t.stops[alight], time: t.times[alight] },
+    delay: adjust?.get(t.raw),
+    stops,
+  };
+}
+
 // Walk the predecessor chain from `to` back to the first leg's alighting
 // node. Exported for departures.js's route-scoped board (same chain walk).
 export function reconstruct(best, from, to) {
@@ -113,7 +135,8 @@ export function reconstruct(best, from, to) {
 // `adjust` (optional, from realtime.js's buildDelays) shifts trips by their
 // observed real-time delays before searching, so catchability, transfers and
 // arrivals reflect reality; legs carry the applied `delay` (undefined =
-// timetable-only, 0 = matched and on time).
+// timetable-only, 0 = matched and on time) plus their per-stop times
+// (see toLeg) for the stop-by-stop popup.
 export function findJourneys(schedule, from, to, enteredMinutes, mNow, adjust) {
   if (from === to) return [];
   const target = enteredMinutes < mNow ? enteredMinutes + 1440 : enteredMinutes;
@@ -168,13 +191,7 @@ export function findJourneys(schedule, from, to, enteredMinutes, mNow, adjust) {
     if (!legs) continue;
 
     const journey = {
-      legs: legs.map(({ trip: t, board, alight }) => ({
-        line: t.line,
-        board: { stop: t.stops[board], time: t.times[board] },
-        alight: { stop: t.stops[alight], time: t.times[alight] },
-        // observed real-time delay of this leg's trip (undefined = no match)
-        delay: adjust?.get(t.raw),
-      })),
+      legs: legs.map((l) => toLeg(l, adjust)),
       depAbs,
       arrAbs: arrival.time,
       departed,

@@ -8,6 +8,10 @@
 // MATCH_TOLERANCE_MIN) is assumed to be that trip. The observed difference
 // becomes the trip's delay and is applied to its whole run — a delay is
 // assumed to hold along the entire trip, an approximation the README notes.
+// Two guards keep mispairs out of the results: duplicate listings of one
+// train collapse before pairing (DUPLICATE_ENTRY_MIN), and a pairing that
+// would make a trip leave earlier than ~3 minutes (MAX_EARLY_MIN) is
+// rejected outright — trains don't meaningfully run early.
 //
 // Pure ES module like search.js: no DOM access, explicit clock inputs, so it
 // can be tested directly from Node (scripts/test-realtime.mjs).
@@ -19,6 +23,18 @@ import { dayKeyFor } from "./search.js";
 // (closest pairing claims first) keeps a large tolerance from mispairing two
 // nearby trains as long as both have feed entries.
 export const MATCH_TOLERANCE_MIN = 15;
+// A train never meaningfully runs early — the PANYNJ timetable note allows
+// ~3 minutes. A pairing on the early side beyond this is a misread (most
+// often a leftover duplicate feed listing posing as the next trip), not
+// reality, so it is rejected outright instead of becoming a phantom
+// "N min early" delay.
+export const MAX_EARLY_MIN = 3;
+// Feed entries this close at one station with the same terminus and a
+// shared line color are the same physical train listed twice (the feed
+// occasionally splits one train into several listings). The copies collapse
+// before pairing — a leftover would otherwise be free to pair with a
+// neighboring timetable trip as a phantom "early"/"late" train.
+export const DUPLICATE_ENTRY_MIN = 2;
 export const RT_HORIZON_MIN = 45; // only stop times within this window of "now" are pairable
 export const STALE_AFTER_MS = 120000; // older snapshots are ignored (timetable-only fallback)
 const GRACE_MIN = 5; // a stop time this recently passed can still be paired (the train may be delayed)
@@ -32,9 +48,31 @@ function toMinutes(hhmm) {
   return parseInt(hhmm.slice(0, 2), 10) * 60 + parseInt(hhmm.slice(3), 10);
 }
 
-// Validate and slim a proxy snapshot (api/realtime.js shape). Returns null
-// when the snapshot is unusable — too old or no parseable entries — so the
-// caller falls back to pure timetable times.
+// Collapse duplicate listings of one physical train at a station: same
+// terminus, a shared line color and a projected arrival within
+// DUPLICATE_ENTRY_MIN of an already-kept entry (see the constant's note). A
+// shared color is required so two genuinely distinct lines toward the same
+// terminus (e.g. the two WTC services at Exchange Place) never merge.
+function collapseDuplicateEntries(entries) {
+  const sorted = [...entries].sort((a, b) => a.projectedMs - b.projectedMs);
+  const kept = [];
+  for (const e of sorted) {
+    const dup = kept.some(
+      (k) =>
+        k.target === e.target &&
+        Math.abs(k.projectedMs - e.projectedMs) <= DUPLICATE_ENTRY_MIN * 60000 &&
+        k.colors.some((c) => e.colors.some((d) => c.toUpperCase() === d.toUpperCase())),
+    );
+    if (!dup) kept.push(e);
+  }
+  return kept;
+}
+
+// Validate and slim a proxy snapshot (api/realtime.js shape): parse the
+// entries, then collapse duplicate listings of the same physical train (see
+// collapseDuplicateEntries). Returns null when the snapshot is unusable —
+// too old or no parseable entries — so the caller falls back to pure
+// timetable times.
 export function normalizeRt(raw, nowMs) {
   if (!raw || typeof raw.fetchedAt !== "number" || nowMs - raw.fetchedAt > STALE_AFTER_MS) {
     return null;
@@ -59,7 +97,7 @@ export function normalizeRt(raw, nowMs) {
         projectedMs: base + seconds * 1000,
       });
     }
-    if (list.length) stations[code] = list;
+    if (list.length) stations[code] = collapseDuplicateEntries(list);
   }
   return Object.keys(stations).length > 0 ? { fetchedAt: raw.fetchedAt, stations } : null;
 }
@@ -68,7 +106,9 @@ export function normalizeRt(raw, nowMs) {
 // array (by reference — the same arrays search.js keys on) to its observed
 // delay in whole minutes. A matched on-time trip maps to 0; trips without a
 // match are absent from the map. Returns null when there is no usable
-// snapshot.
+// snapshot. Duplicate listings of one train have already been collapsed by
+// normalizeRt, and a pairing that would make a trip leave earlier than
+// MAX_EARLY_MIN is rejected outright (see the constants' notes).
 export function buildDelays(schedule, rt, mNow, nowMs = Date.now()) {
   if (!rt) return null;
   const midnightMs = nowMs - mNow * 60000; // start of "today" in the absolute-minute model
@@ -127,7 +167,11 @@ export function buildDelays(schedule, rt, mNow, nowMs = Date.now()) {
             if (!e.colors.some((c) => c.toUpperCase() === lineColor)) continue;
             const projected = (e.projectedMs - midnightMs) / 60000;
             const diff = projected - abs;
-            if (Math.abs(diff) > MATCH_TOLERANCE_MIN) continue;
+            // A train never meaningfully runs early (MAX_EARLY_MIN): a
+            // pairing on the early side beyond that is a misread — typically
+            // a leftover duplicate listing posing as the next trip — so it
+            // is rejected rather than stamped as a phantom "early" delay
+            if (diff < -MAX_EARLY_MIN || diff > MATCH_TOLERANCE_MIN) continue;
             candidates.push({
               trip,
               key: `${line.stops[s]}|${ei}`,

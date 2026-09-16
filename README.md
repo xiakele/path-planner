@@ -19,7 +19,12 @@ origin and how far away each departure is from right now.
   path. A **To {destination} / All trains** switch flips to the full board.
   Real-time projected times, "on time" / "+5 min" badges, struck-through
   timetable times, feed-only extras the printed schedule doesn't know about,
-  sorted nearest departure first and refreshed on every poll.
+  sorted nearest departure first and refreshed on every poll; two trains that
+  end up departing the same minute collapse into one row.
+- **Stop-by-stop details** — every result card and departure-board row is
+  clickable: a popup lists each intermediate stop with its (delay-adjusted)
+  ETA, transfer waits included, and live-refreshes on every poll. Live-only
+  feed trains note that no timetable backs them.
 - **Real-time delays** — trains observed running off-timetable (via the
   PANYNJ RidePATH feed, the same one panynj.gov uses) shift the search
   before ranking: a delayed train you can still catch stays catchable, tight
@@ -52,7 +57,8 @@ duration, the full itinerary with per-leg times and live status, and any
 transfer waits; already-departed options appear dimmed ("departed X min ago"). Missed options
 keep showing around midnight — including trains from the previous calendar
 day's timetable — so you can see the last connection that would have made it
-instead of an empty list.
+instead of an empty list. Clicking (or Enter on) any card — results and board
+rows alike — opens a popup with every stop along the way and its ETA.
 
 ## How it works
 
@@ -121,11 +127,14 @@ commit the refreshed `data/schedule.json` when PATH announces new timetables.
 - Real-time caveats: the feed has no trip IDs, so trip/entry pairing is a
   nearest-time heuristic; it only covers roughly the next 30–45 minutes
   (later journeys show timetable times); and an observed delay is applied to
-  the train's whole run. When the feed is unreachable or stale (> 2 min),
-  the app silently falls back to timetable times. On the departure board,
-  a feed entry only shows as a "live" extra when no timetable train matches
-  it (same terminus, color, within the pairing tolerance) — same heuristic,
-  same limits.
+  the train's whole run. Duplicate listings of one train are collapsed
+  before pairing, and pairings that would make a train leave more than ~3
+  minutes early are rejected outright (trains never meaningfully run early),
+  so leftover feed entries can't pose as phantom trains. When the feed is
+  unreachable or stale (> 2 min), the app silently falls back to timetable
+  times. On the departure board, a feed entry only shows as a "live" extra
+  when no timetable train matches it (same terminus, color, within the
+  pairing tolerance) — same heuristic, same limits.
 - The board's estimated arrivals are the connection scan's earliest outcome
   (up to 2 transfers, journey capped at 2 hours); an observed delay is
   assumed to hold along the whole run, so connecting legs inherit it.
