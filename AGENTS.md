@@ -62,8 +62,13 @@ The user-facing overview is in `README.md`.
   context). Trips whose arrival is earlier on the clock than their departure
   cross midnight and shift forward once.
 - Results are ranked by **latest catchable departure** (not arrival), deduped
-  per departure minute, with dominated journeys pruned. Ranking/journey-shape
-  constants: `TRANSFER_MIN = 3`, `MAX_TRANSFERS = 2` in `src/search.js`.
+  per departure minute, with dominated journeys pruned. Journeys never call
+  again at the origin: `loopsThroughOrigin` prunes looping continuations
+  (the returning train is boardable at the origin directly and surfaces as
+  its own journey; a train merely passing a closed origin overnight —
+  skipped stop, `null` time — doesn't count, so late-night escapes via
+  9 St / 23 St survive). Ranking/journey-shape constants: `TRANSFER_MIN =
+3`, `MAX_TRANSFERS = 2` in `src/search.js`.
 - Departed first legs are always kept as dimmed **missed-train context** —
   they only surface in the top 3 when catchable options run out (typically
   around midnight). Context is bounded to journeys that arrived within the
@@ -103,7 +108,10 @@ The user-facing overview is in `README.md`.
   `continuation`/`reconstruct`) carrying `arrAbs` + `legs`; journeys must
   complete within `MAX_JOURNEY_MIN` (120) of the first departure — the
   scan spans three calendar-day tables, and without the cap the next
-  day's trains would pose as connections. Scoped extras are gated on
+  day's trains would pose as connections. Scoped connections never loop
+  back through the station — search.js's exported `loopsThroughOrigin`
+  prunes those rows; the returning train appears as its own row. Scoped
+  extras are gated on
   `terminus === to`. Every timetable row (scoped or not) carries `legs`
   built by search.js's exported `toLeg`, each leg with per-stop
   `{stop, time}` pairs (delay-adjusted, skipped stops omitted) — scoped rows

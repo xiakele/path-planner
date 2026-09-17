@@ -124,6 +124,27 @@ export function reconstruct(best, from, to) {
   return legs;
 }
 
+// A journey loops when a ride after the first calls again at the origin
+// (e.g. 9 St -> 14 St, then the JSQ-bound train back through 9 St): the
+// rider returns to their starting station mid-journey. Whenever that
+// happens, boarding the same returning train at the origin directly is an
+// equal alternative — found independently by the per-first-trip search —
+// so looping continuations are dropped. Only stops the train actually
+// calls at count: one passing a closed origin without stopping (overnight
+// 9 St / 23 St) can be a legitimate, even the only, way out. Exported for
+// departures.js's route-scoped board, which prunes the same shape.
+export function loopsThroughOrigin(legs, origin) {
+  // The first leg boards at the origin by construction and a line's stops
+  // are unique, so only later rides can return to it
+  for (let li = 1; li < legs.length; li++) {
+    const { trip: t, board, alight } = legs[li];
+    for (let k = board; k <= alight; k++) {
+      if (t.times[k] !== null && t.stops[k] === origin) return true;
+    }
+  }
+  return false;
+}
+
 // Returns up to 3 journeys: the ones arriving at `to` latest while still no
 // later than the entered time (interpreted as the next occurrence). First
 // legs that already departed are always included as dimmed "missed" context;
@@ -131,6 +152,8 @@ export function reconstruct(best, from, to) {
 // them out of the top 3, so they surface only when you've missed the last
 // connection (typically around midnight, when the deadline rolls to the
 // next day but the trains that would have made it are already gone).
+// Journeys also never call again at the origin — looping continuations are
+// pruned (see loopsThroughOrigin).
 //
 // `adjust` (optional, from realtime.js's buildDelays) shifts trips by their
 // observed real-time delays before searching, so catchability, transfers and
@@ -189,6 +212,10 @@ export function findJourneys(schedule, from, to, enteredMinutes, mNow, adjust) {
 
     const legs = reconstruct(best, from, to);
     if (!legs) continue;
+    // A continuation that rides away and back through the origin is a loop:
+    // the returning train boards at the origin directly and surfaces as its
+    // own journey, so the looping one is dropped
+    if (loopsThroughOrigin(legs, from)) continue;
 
     const journey = {
       legs: legs.map((l) => toLeg(l, adjust)),

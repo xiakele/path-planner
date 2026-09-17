@@ -137,5 +137,90 @@ console.log("leg stop sequences");
   );
 }
 
+console.log("loop-free connections");
+{
+  // The reported bug shape: from 9 St, riding the JSQ-ward leg to 14 St and
+  // catching the return train — which calls at 9 St again en route to JSQ —
+  // is a loop. The same return train boards 9 St directly, and that journey
+  // is the one that must be offered
+  const mkLines = () => [
+    mkLine("9 Street - 14 Street", "#4D92FB", ["09S", "14S"], [["10:00", "10:02"]]),
+    mkLine(
+      "14 Street - Journal Square",
+      "#FF9900",
+      ["14S", "09S", "JSQ"],
+      [["10:05", "10:07", "10:13"]],
+    ),
+  ];
+  const lines = mkLines();
+  const sched = {
+    generatedAt: new Date().toISOString(),
+    source: "fixture",
+    days: { weekday: lines, saturday: lines, sunday: lines },
+  };
+  const js = findJourneys(sched, "09S", "JSQ", 620, 595);
+  check("loopy continuation is pruned", !js.some((j) => j.depAbs === 600));
+  check(
+    "the direct ride on the returning train is offered",
+    js.length === 1 && js[0].depAbs === 607 && js[0].legs.length === 1,
+  );
+
+  // Legitimate retrace kept: 33 St -> JSQ transfers to the WTC train, which
+  // passes Grove Street again after the first leg already did — a shared
+  // corridor, not a loop (the origin is never revisited), so it must stay
+  const corridor = [
+    mkLine(
+      "33 Street - Journal Square",
+      "#FF9900",
+      ["33S", "GRO", "JSQ"],
+      [["10:00", "10:04", "10:08"]],
+    ),
+    mkLine(
+      "Journal Square - World Trade Center",
+      "#D93A30",
+      ["JSQ", "GRO", "EXC", "WTC"],
+      [["10:15", "10:19", "10:22", "10:25"]],
+    ),
+  ];
+  const corridorSched = {
+    generatedAt: new Date().toISOString(),
+    source: "fixture",
+    days: { weekday: corridor, saturday: corridor, sunday: corridor },
+  };
+  const cj = findJourneys(corridorSched, "33S", "WTC", 630, 595);
+  check(
+    "shared-corridor retrace is kept",
+    cj.length === 1 && cj[0].depAbs === 600 && cj[0].legs.length === 2 && cj[0].arrAbs === 625,
+  );
+
+  // A train passing the closed origin without stopping doesn't count as
+  // returning to it: after midnight, riding 9 St -> 14 St to catch the
+  // overnight JSQ-bound train (which skips 9 St) is the only way out and
+  // must survive
+  const nightLines = [
+    mkLine("9 Street - 14 Street (night)", "#4D92FB", ["09S", "14S"], [["23:58", "00:02"]]),
+    mkLine(
+      "14 Street - Journal Square (night)",
+      "#FF9900",
+      ["14S", "09S", "JSQ"],
+      [["00:10", null, "00:30"]],
+    ),
+  ];
+  const nightSched = {
+    generatedAt: new Date().toISOString(),
+    source: "fixture",
+    days: { weekday: nightLines, saturday: nightLines, sunday: nightLines },
+  };
+  const nj = findJourneys(nightSched, "09S", "JSQ", 35, 1436);
+  check(
+    "overnight escape via the closed origin survives",
+    nj.length === 1 && nj[0].depAbs === 1438 && !nj[0].departed,
+  );
+  check(
+    "escape journey keeps both legs and its arrival",
+    nj[0].legs.length === 2 && nj[0].arrAbs === 1470,
+  );
+}
+
 console.log(`${checks - failures}/${checks} checks passed`);
 process.exit(failures ? 1 : 0);

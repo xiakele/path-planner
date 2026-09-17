@@ -447,6 +447,43 @@ console.log("route-scoped board");
   );
 }
 
+console.log("scoped board prunes loops through the station");
+{
+  // The same shape findJourneys prunes: the 10:00 leg from 9 St to 14 St
+  // "connects" to JSQ only by riding the return train back through 9 St —
+  // a loop. Scoped to JSQ, that first leg must not be a row; the returning
+  // train itself (boarding 9 St at 10:07) is the row. The all-trains board
+  // is untouched: a departure is a departure
+  const lines = [
+    mkLine("9 Street - 14 Street", "#4D92FB", ["09S", "14S"], [["10:00", "10:02"]]),
+    mkLine(
+      "14 Street - Journal Square",
+      "#FF9900",
+      ["14S", "09S", "JSQ"],
+      [["10:05", "10:07", "10:13"]],
+    ),
+  ];
+  const sched = {
+    generatedAt: new Date(NOW_MS).toISOString(),
+    source: "fixture",
+    days: { weekday: lines, saturday: lines, sunday: lines },
+  };
+  const scoped = findDepartures(sched, "09S", M_NOW, NOW_MS, null, "JSQ");
+  check(
+    "looping first leg is not scoped to the destination",
+    !scoped.some((r) => r.depAbs === 600),
+  );
+  check(
+    "the returning train is the scoped row",
+    scoped.length === 1 && scoped[0].depAbs === 607 && scoped[0].arrAbs === 613,
+  );
+  const full = findDepartures(sched, "09S", M_NOW, NOW_MS, null);
+  check(
+    "all-trains board still lists both departures",
+    full.length === 2 && full.map((r) => r.depAbs).join(",") === "600,607",
+  );
+}
+
 console.log("closed / unserved stations");
 {
   // 09 St has service in the fixture but a station nothing serves (or a

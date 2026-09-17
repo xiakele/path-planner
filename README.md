@@ -31,7 +31,11 @@ origin and how far away each departure is from right now.
   transfers and arrivals reflect reality, and result cards show "on time" /
   "+5 min" badges with the timetable time struck through.
 - **Transfer connections** — up to 2 transfers with a 3-minute minimum
-  connection time, e.g. Journal Square → Newport → Hoboken.
+  connection time, e.g. Journal Square → Newport → Hoboken. Connections
+  never call again at your origin station (a ride out and back is replaced
+  by the returning train boarded directly); a train merely passing a closed
+  origin overnight doesn't count as a loop, so late-night escapes via
+  9 St / 23 St still work.
 - **Next-occurrence time logic** — if the entered time has already passed, the
   query rolls to the next day; late-night trips are kept on the correct
   calendar day (PATH tables are per calendar day, so Saturday 00:10 runs

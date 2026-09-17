@@ -16,12 +16,21 @@
 // `to` (arrAbs, transfer waits included) plus the reconstructed legs, so
 // the UI can show the estimated arrival and the transfer path. Feed extras
 // are kept only when their terminus is `to` itself (rideable, but no
-// arrival estimate is possible).
+// arrival estimate is possible). Scoped connections never loop back
+// through the station — search.js's loopsThroughOrigin prunes those rows;
+// the returning train appears as its own row instead.
 //
 // Pure ES module like search.js / realtime.js: no DOM access, explicit clock
 // inputs, tested from Node (scripts/test-departures.mjs).
 
-import { collectTrips, continuation, MAX_TRANSFERS, reconstruct, toLeg } from "./search.js";
+import {
+  collectTrips,
+  continuation,
+  loopsThroughOrigin,
+  MAX_TRANSFERS,
+  reconstruct,
+  toLeg,
+} from "./search.js";
 import { buildDelays, FEED_TO_SCHED, MATCH_TOLERANCE_MIN } from "./realtime.js";
 
 export const DEPARTURES_WINDOW_MIN = 45; // board horizon: departures within this window of "now"
@@ -117,6 +126,10 @@ export function findDepartures(schedule, station, mNow, nowMs = Date.now(), rt =
       if (arrival.time > depAbs + MAX_JOURNEY_MIN) continue;
       const legs = reconstruct(best, station, to);
       if (!legs) continue;
+      // A connection that rides away and back through this station is a
+      // loop — the returning train boards here directly and appears as its
+      // own row, so this first leg doesn't scope to the destination
+      if (loopsThroughOrigin(legs, station)) continue;
       rows.push({
         line: trip.line,
         terminus,
