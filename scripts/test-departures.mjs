@@ -598,5 +598,112 @@ console.log("closed / unserved stations");
   check("night gap is empty", findDepartures(sched, "JSQ", 300, NOW_MS, null).length === 0);
 }
 
+console.log("route-scoped board prefers usable direct departures");
+{
+  const makeSchedule = () => {
+    // Direct trains can arrive sooner with a transfer; the board must keep
+    // their direct rides and hide separate feeder departures when possible.
+    const lines = [
+      mkLine(
+        "JSQ - WTC",
+        "#D93A30",
+        ["JSQ", "NEW", "WTC"],
+        [
+          ["10:00", "10:05", "10:30"],
+          ["10:10", "10:15", "10:40"],
+        ],
+      ),
+      mkLine(
+        "JSQ - Newport",
+        "#FF9900",
+        ["JSQ", "NEW"],
+        [
+          ["10:03", "10:07"],
+          ["10:13", "10:17"],
+          ["10:23", "10:27"],
+        ],
+      ),
+      mkLine(
+        "Newport - WTC",
+        "#65C100",
+        ["NEW", "WTC"],
+        [
+          ["10:10", "10:15"],
+          ["10:20", "10:25"],
+          ["10:30", "10:35"],
+        ],
+      ),
+    ];
+    return { days: { weekday: lines, saturday: lines, sunday: lines } };
+  };
+  const sched = makeSchedule();
+  const direct = findDepartures(sched, "JSQ", M_NOW, NOW_MS, null, "WTC");
+  check(
+    "available direct trains hide transfer-only first legs",
+    direct.length === 2 &&
+      direct.every((r) => r.legs.length === 1) &&
+      direct.map((r) => r.depAbs).join(",") === "600,610",
+  );
+  check(
+    "board keeps the direct ride instead of a faster connection",
+    direct.map((r) => r.arrAbs).join(",") === "630,640",
+  );
+  const all = findDepartures(sched, "JSQ", M_NOW, NOW_MS);
+  check(
+    "All trains mode keeps departures that would require a transfer",
+    all.length === 5 && all.filter((r) => r.terminus === "NEW").length === 3,
+  );
+  const future = makeSchedule();
+  future.days.weekday[0].trips = [["10:50", "10:55", "11:20"]];
+  const fallback = findDepartures(future, "JSQ", M_NOW, NOW_MS, null, "WTC");
+  check(
+    "direct trains beyond 45 minutes do not suppress transfers",
+    fallback.length === 3 && fallback.every((r) => r.legs.length === 2),
+  );
+  const missed = findDepartures(sched, "JSQ", 612, NOW_MS, null, "WTC");
+  check(
+    "departed direct context does not suppress upcoming connections",
+    missed.some((r) => r.depAbs >= 612 && r.legs.length === 2),
+  );
+  for (const index of [0, 2]) {
+    const skipped = makeSchedule();
+    skipped.days.weekday[0].trips.forEach((trip) => {
+      trip[index] = null;
+    });
+    const rows = findDepartures(skipped, "JSQ", M_NOW, NOW_MS, null, "WTC");
+    check(
+      `board rejects skipped ${index === 0 ? "origin" : "destination"} as direct evidence`,
+      rows.length > 0 && rows.every((r) => r.legs.length === 2),
+    );
+  }
+  const tooLong = makeSchedule();
+  tooLong.days.weekday[0].trips = [["10:00", "10:05", "12:10"]];
+  const shortConnections = findDepartures(tooLong, "JSQ", M_NOW, NOW_MS, null, "WTC");
+  check(
+    "direct rides beyond the journey cap do not suppress transfers",
+    shortConnections.length > 0 && shortConnections.every((r) => r.legs.length === 2),
+  );
+
+  // With only feeders in the timetable, a feed-only train ending at the
+  // selected destination is still direct evidence within the board window.
+  const onlyTransfers = makeSchedule();
+  onlyTransfers.days.weekday.shift();
+  const live = normalizeRt(
+    { fetchedAt: NOW_MS, stations: { JSQ: [entry("WTC", "65C100", 607)] } },
+    NOW_MS,
+  );
+  const extra = findDepartures(onlyTransfers, "JSQ", M_NOW, NOW_MS, live, "WTC");
+  check(
+    "a direct feed-only extra suppresses timetable transfer options",
+    extra.length === 1 && extra[0].fromFeed && extra[0].depAbs === 607,
+  );
+  const expired = { ...live, fetchedAt: NOW_MS - 120001 };
+  const stale = findDepartures(onlyTransfers, "JSQ", M_NOW, NOW_MS, expired, "WTC");
+  check(
+    "stale direct feed data does not suppress fallback connections",
+    stale.length === 3 && stale.every((r) => r.legs.length === 2),
+  );
+}
+
 console.log(`${checks - failures}/${checks} checks passed`);
 process.exit(failures ? 1 : 0);

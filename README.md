@@ -32,7 +32,10 @@ origin and how far away each departure is from right now.
   Cards distinguish live predictions, estimates from other stops, and
   timetable-only times, with changed timetable times struck through.
 - **Transfer connections** — up to 2 transfers with a 3-minute minimum
-  connection time, e.g. Journal Square → Newport → Hoboken. Connections
+  connection time, e.g. Journal Square → Newport → Hoboken. Both Find trains
+  and route-scoped Live departures show only direct rides when a usable
+  direct train fits the deadline or board window; otherwise transfers remain
+  available as a fallback. All trains mode is unchanged. Connections
   never call again at your origin station (a ride out and back is replaced
   by the returning train boarded directly); a train merely passing a closed
   origin overnight doesn't count as a loop, so late-night escapes via
@@ -104,7 +107,7 @@ rows alike — opens a popup with every stop along the way and its ETA.
 pnpm install
 pnpm dev              # serve locally at http://localhost:8080 (vercel dev —
                       # runs api/ too; needs a one-time `vercel link`)
-pnpm test             # Node harnesses (search, real-time delays, departures)
+pnpm test             # Node harnesses (search, real-time delays, departures, formatting)
 pnpm update:schedule  # refresh data/schedule.json from panynj.gov
 pnpm lint             # ESLint
 pnpm format           # Prettier

@@ -61,6 +61,18 @@ export function collectTrips(schedule, date, base, adjust) {
   return out;
 }
 
+// A direct ride must call at both endpoints in travel order. Merely sharing
+// a line's stop list is insufficient when overnight trips skip a station.
+// Shared by arrive-by search and the route-scoped departure board.
+export function directRide(trip, from, to) {
+  const board = trip.stops.indexOf(from);
+  const alight = trip.stops.indexOf(to);
+  if (board < 0 || alight <= board || trip.times[board] === null || trip.times[alight] === null) {
+    return null;
+  }
+  return { trip, board, alight };
+}
+
 // Relay-style relaxation: starting from `alights` (station -> arrival), find
 // the earliest reachable time at every station using at most `budget` more
 // legs. Each pass may only board trips using the previous pass's arrivals, so
@@ -175,6 +187,8 @@ export function loopsThroughOrigin(legs, origin) {
 // next day but the trains that would have made it are already gone).
 // Journeys also never call again at the origin — looping continuations are
 // pruned (see loopsThroughOrigin).
+// If any catchable direct ride meets the deadline, only direct rides are
+// considered; otherwise transfers remain available as a fallback.
 //
 // `adjust` optionally applies stop-specific predictions before searching:
 // boarding uses the origin's prediction, arrival uses the alighting stop's,
@@ -197,6 +211,12 @@ export function findJourneys(schedule, from, to, enteredMinutes, mNow, adjust, n
     ...collectTrips(schedule, tomorrow, 1440, adjust),
   ];
 
+  // Decide before connection scanning: a faster transfer could otherwise
+  // overwrite the direct ride on the very same first train.
+  const directOnly = allTrips.some((trip) => {
+    const ride = directRide(trip, from, to);
+    return ride && trip.times[ride.board] >= mNow - GRACE && trip.times[ride.alight] <= target;
+  });
   const seen = new Map(); // departure minute -> journey (dedupe, keep the simplest)
 
   for (const trip of allTrips) {
@@ -220,7 +240,7 @@ export function findJourneys(schedule, from, to, enteredMinutes, mNow, adjust, n
       });
     }
 
-    const best = continuation(allTrips, alights, MAX_TRANSFERS);
+    const best = continuation(allTrips, alights, directOnly ? 0 : MAX_TRANSFERS);
     const arrival = best.get(to);
     if (!arrival || arrival.time > target) continue;
     // Context that completed long ago (yesterday evening's leftovers) is

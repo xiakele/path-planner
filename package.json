@@ -9,7 +9,8 @@
     "test:search": "node scripts/test-search.mjs",
     "test:realtime": "node scripts/test-realtime.mjs",
     "test:departures": "node scripts/test-departures.mjs",
-    "test": "node scripts/test-search.mjs && node scripts/test-realtime.mjs && node scripts/test-departures.mjs",
+    "test:format": "node scripts/test-format.mjs",
+    "test": "node scripts/test-search.mjs && node scripts/test-realtime.mjs && node scripts/test-departures.mjs && node scripts/test-format.mjs",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check ."

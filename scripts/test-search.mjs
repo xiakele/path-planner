@@ -231,5 +231,123 @@ console.log("loop-free connections");
   );
 }
 
+console.log("direct rides take precedence, with transfers as fallback");
+{
+  const nowMs = new Date(2026, 9, 28, 10).getTime();
+  const makeSchedule = () => {
+    // Every direct train has a faster transfer at NEW. Later feeder trips
+    // would also outrank the directs if filtering happened after the top 3.
+    const lines = [
+      mkLine(
+        "JSQ - WTC",
+        "#D93A30",
+        ["JSQ", "NEW", "WTC"],
+        [
+          ["10:00", "10:05", "10:30"],
+          ["10:10", "10:15", "10:40"],
+        ],
+      ),
+      mkLine(
+        "JSQ - Newport",
+        "#FF9900",
+        ["JSQ", "NEW"],
+        [
+          ["10:03", "10:07"],
+          ["10:13", "10:17"],
+          ["10:23", "10:27"],
+        ],
+      ),
+      mkLine(
+        "Newport - WTC",
+        "#65C100",
+        ["NEW", "WTC"],
+        [
+          ["10:10", "10:15"],
+          ["10:20", "10:25"],
+          ["10:30", "10:35"],
+        ],
+      ),
+    ];
+    return { days: { weekday: lines, saturday: lines, sunday: lines } };
+  };
+  const sched = makeSchedule();
+  const direct = findJourneys(sched, "JSQ", "WTC", 640, 600, null, nowMs);
+  check(
+    "direct routes exclude later-departing transfers before ranking",
+    direct.length === 2 &&
+      direct.every((j) => j.legs.length === 1) &&
+      direct.map((j) => j.depAbs).join(",") === "610,600",
+  );
+  check(
+    "a faster transfer cannot replace the same train's direct ride",
+    direct.map((j) => j.arrAbs).join(",") === "640,630",
+  );
+  const tight = findJourneys(sched, "JSQ", "WTC", 625, 600, null, nowMs);
+  check(
+    "transfers remain when direct trains miss the deadline",
+    tight.length > 0 && tight.every((j) => j.legs.length === 2 && j.arrAbs <= 625),
+  );
+  const missed = findJourneys(sched, "JSQ", "WTC", 640, 612, null, nowMs);
+  check(
+    "missed direct trains do not hide catchable transfers",
+    missed.some((j) => !j.departed && j.legs.length === 2),
+  );
+  const predictions = new Map(
+    sched.days.weekday[0].trips.map((trip) => [
+      trip,
+      new Map([
+        [
+          0,
+          trip.map((time, index) => {
+            const [h, m] = time.split(":").map(Number);
+            const delay = index === 2 ? 12 : 0;
+            return { time: h * 60 + m + delay, delay, source: "live" };
+          }),
+        ],
+      ]),
+    ]),
+  );
+  const delayed = findJourneys(sched, "JSQ", "WTC", 640, 600, { trips: predictions }, nowMs);
+  check(
+    "real-time arrival delays can restore the transfer fallback",
+    delayed.length > 0 && delayed.every((j) => j.legs.length === 2),
+  );
+  for (const index of [0, 2]) {
+    const skipped = makeSchedule();
+    skipped.days.weekday[0].trips.forEach((trip) => {
+      trip[index] = null;
+    });
+    const journeys = findJourneys(skipped, "JSQ", "WTC", 640, 600, null, nowMs);
+    check(
+      `skipped ${index === 0 ? "origin" : "destination"} does not count as direct service`,
+      journeys.length > 0 && journeys.every((j) => j.legs.length === 2),
+    );
+  }
+  const reversed = makeSchedule();
+  reversed.days.weekday[0].stops.reverse();
+  const backwards = findJourneys(reversed, "JSQ", "WTC", 640, 600, null, nowMs);
+  check(
+    "opposite-direction services do not suppress transfers",
+    backwards.length > 0 && backwards.every((j) => j.legs.length === 2),
+  );
+
+  // The direct ride crosses midnight; the quicker transfer belongs to
+  // tomorrow's calendar-day table and must not win merely by arriving first.
+  const lines = [
+    mkLine("JSQ - WTC", "#D93A30", ["JSQ", "NEW", "WTC"], [["23:58", "00:05", "00:20"]]),
+    mkLine("JSQ - Newport", "#FF9900", ["JSQ", "NEW"], [["23:59", "00:03"]]),
+    mkLine("Newport - WTC", "#65C100", ["NEW", "WTC"], [["00:08", "00:12"]]),
+  ];
+  const night = { days: { weekday: lines, saturday: lines, sunday: lines } };
+  const overnight = findJourneys(night, "JSQ", "WTC", 25, 1435, null, nowMs);
+  check(
+    "direct preference survives a rolled midnight deadline",
+    overnight.length === 1 &&
+      overnight[0].legs.length === 1 &&
+      overnight[0].depAbs === 1438 &&
+      overnight[0].arrAbs === 1460,
+  );
+}
+
 console.log(`${checks - failures}/${checks} checks passed`);
 process.exit(failures ? 1 : 0);

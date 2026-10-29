@@ -18,6 +18,8 @@
 // arrival estimate is possible). Scoped connections never loop back
 // through the station — search.js's loopsThroughOrigin prunes those rows;
 // the returning train appears as its own row instead.
+// An upcoming direct ride in the board window (including a feed-only train
+// ending at `to`) suppresses transfers; without one, connections are kept.
 //
 // Pure ES module like search.js / realtime.js: no DOM access, explicit clock
 // inputs, tested from Node (scripts/test-departures.mjs).
@@ -25,6 +27,7 @@
 import {
   collectTrips,
   continuation,
+  directRide,
   loopsThroughOrigin,
   MAX_TRANSFERS,
   reconstruct,
@@ -80,6 +83,30 @@ export function findDepartures(schedule, station, mNow, nowMs = Date.now(), rt =
     ...collectTrips(schedule, tomorrow, 1440, model),
   ];
 
+  const midnightMs = nowMs - mNow * 60000;
+  const isUpcoming = (time) => time >= mNow && time <= mNow + DEPARTURES_WINDOW_MIN;
+  // Only usable direct rides trigger the preference, not departed context,
+  // skipped endpoints, or trains outside the board/journey windows. All-trains
+  // mode has no destination and remains an unfiltered station board.
+  const directOnly =
+    to &&
+    (allTrips.some((trip) => {
+      const ride = directRide(trip, station, to);
+      return (
+        ride &&
+        isUpcoming(trip.times[ride.board]) &&
+        trip.times[ride.alight] <= trip.times[ride.board] + MAX_JOURNEY_MIN
+      );
+    }) ||
+      (model &&
+        to !== station &&
+        (rt.stations[station] ?? []).some(
+          (entry) =>
+            !model.matchedEntries.get(station)?.has(entry) &&
+            (FEED_TO_SCHED[entry.target] ?? entry.target) === to &&
+            isUpcoming((entry.projectedMs - midnightMs) / 60000),
+        )));
+
   const rows = [];
   for (const trip of allTrips) {
     const s = trip.stops.indexOf(station);
@@ -110,7 +137,7 @@ export function findDepartures(schedule, station, mNow, nowMs = Date.now(), rt =
           pred: { trip, board: s, alight: k, first: true },
         });
       }
-      const best = continuation(allTrips, alights, MAX_TRANSFERS);
+      const best = continuation(allTrips, alights, directOnly ? 0 : MAX_TRANSFERS);
       const arrival = best.get(to);
       if (!arrival) continue;
       // The scan spans three calendar-day tables, so without a bound a first
@@ -153,7 +180,6 @@ export function findDepartures(schedule, station, mNow, nowMs = Date.now(), rt =
 
   // Consume the optimizer's actual assignments, not a separate proximity
   // guess. Rejected inconsistent anchors still belong to their assigned train.
-  const midnightMs = nowMs - mNow * 60000; // start of "today" in the absolute-minute model
   for (const e of model ? (rt.stations[station] ?? []) : []) {
     if (model.matchedEntries.get(station)?.has(e)) continue;
     const terminus = FEED_TO_SCHED[e.target] ?? e.target;

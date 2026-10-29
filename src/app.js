@@ -5,6 +5,8 @@
 import { findJourneys } from "./search.js";
 import { buildRealtimeModel, normalizeRt, STALE_AFTER_MS } from "./realtime.js";
 import { DEPARTURES_WINDOW_MIN, findDepartures } from "./departures.js";
+// One formatter owns the whole phrase, independent of each view's grace period.
+import { departureText } from "./format.js";
 
 const STATIONS = {
   NWK: "Newark",
@@ -228,19 +230,6 @@ function initPicker() {
 // Delegates to search.js (transfer-aware journey search). Journeys carry
 // legs: [{line, board:{stop,time}, alight:{stop,time}}], plus depAbs / arrAbs
 // (absolute minutes) and a `departed` flag for missed-context options.
-
-function offsetText(depAbs, mNow) {
-  const diff = Math.round(depAbs - mNow);
-  if (Math.abs(diff) < 1) return "leaving now";
-  if (diff > 0) {
-    if (diff < 60) return `in <b>${diff} min</b>`;
-    return `in <b>${Math.floor(diff / 60)} h ${diff % 60} min</b>`;
-  }
-  // Missed context can be hours old (yesterday's last trains); format the
-  // long ones like the "in" branch does
-  if (-diff >= 60) return `<b>departed</b> ${Math.floor(-diff / 60)} h ${-diff % 60} min ago`;
-  return `<b>departed</b> ${-diff} min ago`;
-}
 
 // Badges describe the boarding stop, never a whole train. Inferred offsets
 // are explicitly estimated; round only presentation, not routing inputs.
@@ -592,7 +581,7 @@ function renderResults(from, to, targetMinutes) {
           })
           .join("")}
       </div>
-      <div class="offset">${departed ? "" : "departs "}${offsetText(depAbs, mNow)}</div>
+      <div class="offset">${departureText(depAbs, mNow)}</div>
     `;
     // The whole card opens the stop-by-stop popup (click or Enter/Space)
     makeClickable(item, () => openPopup("journey", journey, journeyKey(journey), resultList));
@@ -724,7 +713,7 @@ function renderDepartures(board) {
         </div>
         ${transfers}
       </div>
-      <div class="offset">${departed ? "" : "departs "}${offsetText(row.depAbs, mNow)}</div>
+      <div class="offset">${departureText(row.depAbs, mNow)}</div>
     `;
     // The whole card opens the stop-by-stop popup (click or Enter/Space);
     // feed-only extras open it too, with a "no timetable" note instead of stops

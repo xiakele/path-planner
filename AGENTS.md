@@ -12,8 +12,11 @@ The user-facing overview is in `README.md`.
 - `src/app.js` — all UI (route selects, drum time picker, rendering, the
   16 s real-time poll with a 1 s freshness ticker, paused in hidden tabs;
   the click-through stop popup shared by results and the board).
+- `src/format.js` — pure departure-label formatter, tested by
+  `scripts/test-format.mjs`. It owns the entire phrase (including verbs);
+  catchability/departed flags affect styling, not the label's grammar.
 - `src/search.js` — journey search; pure ES module with no DOM access, so it
-  can be tested directly from Node. `collectTrips` / `continuation` /
+  can be tested directly from Node. `collectTrips` / `directRide` / `continuation` /
   `reconstruct` / `toLeg` are exported for `departures.js`'s board and the
   UI's leg rendering.
 - `src/realtime.js` — pairs feed entries with scheduled stops into per-stop
@@ -34,9 +37,9 @@ The user-facing overview is in `README.md`.
 - `pnpm dev` — local server on :8080 via `vercel dev` (serves `api/` too;
   needs a one-time `vercel link`). Without linking, the site still works,
   just without real-time data. There is no build step.
-- `pnpm test` — Node harnesses for the search, delay and departure-board
+- `pnpm test` — Node harnesses for search, delays, departure-board logic, and formatting
   layers (`scripts/test-search.mjs`, `scripts/test-realtime.mjs`,
-  `scripts/test-departures.mjs`; fixed clocks, no framework; keep extending
+  `scripts/test-departures.mjs`, `scripts/test-format.mjs`; fixed clocks, no framework; keep extending
   them when touching `src/search.js` / `src/realtime.js` /
   `src/departures.js`).
 - `pnpm lint` / `pnpm format` / `pnpm format:check` — ESLint + Prettier; run
@@ -64,7 +67,14 @@ The user-facing overview is in `README.md`.
   context). Trips whose arrival is earlier on the clock than their departure
   cross midnight and shift forward once.
 - Results are ranked by **latest catchable departure** (not arrival), deduped
-  per departure minute, with dominated journeys pruned. Journeys never call
+  per departure minute, with dominated journeys pruned. A catchable direct
+  ride meeting the arrival deadline disables transfer scanning before ranking;
+  otherwise transfers remain a fallback. The scoped departure board applies
+  the same preference to upcoming direct trains in its 45-minute window and
+  120-minute journey cap, including feed-only extras ending at the destination.
+  Missed direct context does not hide usable connections; All trains mode is
+  unchanged. `directRide` checks endpoint order and non-null stop times.
+  Journeys never call
   again at the origin: `loopsThroughOrigin` prunes looping continuations
   (the returning train is boardable at the origin directly and surfaces as
   its own journey; a train merely passing a closed origin overnight —
