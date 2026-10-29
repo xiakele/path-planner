@@ -2,12 +2,9 @@
 //
 // The PANYNJ feed (proxied by api/realtime.js) reports, per station, the
 // upcoming trains: terminus, line colors and a projected arrival. It has no
-// trip IDs, so timetable trips are paired with feed entries heuristically:
-// at a shared station, an entry whose terminus and colors fit the line and
-// whose projected arrival is closest to the timetable time (within
-// MATCH_TOLERANCE_MIN) is assumed to be that trip. The observed difference
-// becomes the trip's delay and is applied to its whole run — a delay is
-// assumed to hold along the entire trip, an approximation the README notes.
+// trip IDs. At each station we maximize the number of compatible matches,
+// then minimize their total absolute timestamp offset. Each matched stop
+// keeps its own prediction; missing stops interpolate/extrapolate estimates.
 // Two guards keep mispairs out of the results: duplicate listings of one
 // train collapse before pairing (DUPLICATE_ENTRY_MIN), and a pairing that
 // would make a trip leave earlier than ~3 minutes (MAX_EARLY_MIN) is
@@ -16,12 +13,13 @@
 // Pure ES module like search.js: no DOM access, explicit clock inputs, so it
 // can be tested directly from Node (scripts/test-realtime.mjs).
 
-import { dayKeyFor } from "./search.js";
+import { collectTrips } from "./search.js";
+import { minimumCostMatching } from "./matching.js";
 
 // Max |projected - timetable| to pair a trip with a feed entry. Generous on
-// purpose: delays are the whole point, and the greedy global matching below
-// (closest pairing claims first) keeps a large tolerance from mispairing two
-// nearby trains as long as both have feed entries.
+// purpose: delays are the whole point. The assignment minimizes total absolute
+// offset across all compatible trains at a station, rather than claiming the
+// closest individual pair first. Without train IDs it remains a heuristic.
 export const MATCH_TOLERANCE_MIN = 15;
 // A train never meaningfully runs early — the PANYNJ timetable note allows
 // ~3 minutes. A pairing on the early side beyond this is a misread (most
@@ -42,11 +40,6 @@ const GRACE_MIN = 5; // a stop time this recently passed can still be paired (th
 // The feed names two stations differently than the timetable (shared with
 // departures.js's board builder)
 export const FEED_TO_SCHED = { GRV: "GRO", EXP: "EXC" };
-
-// "HH:MM" -> minutes since midnight (same parsing as search.js)
-function toMinutes(hhmm) {
-  return parseInt(hhmm.slice(0, 2), 10) * 60 + parseInt(hhmm.slice(3), 10);
-}
 
 // Collapse duplicate listings of one physical train at a station: same
 // terminus, a shared line color and a projected arrival within
@@ -95,6 +88,7 @@ export function normalizeRt(raw, nowMs) {
           .split(",")
           .map((c) => c.trim().replace(/^#?/, "#")),
         projectedMs: base + seconds * 1000,
+        updatedMs: base, // resolve inconsistent stop predictions using source age
       });
     }
     if (list.length) stations[code] = collapseDuplicateEntries(list);
@@ -102,99 +96,106 @@ export function normalizeRt(raw, nowMs) {
   return Object.keys(stations).length > 0 ? { fetchedAt: raw.fetchedAt, stations } : null;
 }
 
-// Pair timetable trips with feed entries and return a Map from the trip
-// array (by reference — the same arrays search.js keys on) to its observed
-// delay in whole minutes. A matched on-time trip maps to 0; trips without a
-// match are absent from the map. Returns null when there is no usable
-// snapshot. Duplicate listings of one train have already been collapsed by
-// normalizeRt, and a pairing that would make a trip leave earlier than
-// MAX_EARLY_MIN is rejected outright (see the constants' notes).
-export function buildDelays(schedule, rt, mNow, nowMs = Date.now()) {
-  if (!rt) return null;
-  const midnightMs = nowMs - mNow * 60000; // start of "today" in the absolute-minute model
-  const delays = new Map();
+// Retain a monotone set of anchors, considering newer source observations
+// first, then smaller offsets and earlier stop indices. Rejected observations
+// remain assigned to this train (not invented as feed-only extra trains).
+function stopPredictions(times, observations) {
+  const anchors = [];
+  const ranked = [...observations].sort(
+    (a, b) =>
+      b.updatedMs - a.updatedMs || Math.abs(a.delay) - Math.abs(b.delay) || a.index - b.index,
+  );
+  for (const anchor of ranked) {
+    if (
+      anchors.every((other) =>
+        other.index < anchor.index ? other.time <= anchor.time : anchor.time <= other.time,
+      )
+    ) {
+      anchors.push(anchor);
+    }
+  }
+  anchors.sort((a, b) => a.index - b.index);
+  return times.map((scheduledTime, index) => {
+    if (scheduledTime === null) return null;
+    const direct = anchors.find((a) => a.index === index);
+    if (direct) return { time: direct.time, delay: direct.delay, source: "live" };
+    const before = anchors.findLast((a) => a.index < index);
+    const after = anchors.find((a) => a.index > index);
+    let delay;
+    if (before && after) {
+      const span = times[after.index] - times[before.index];
+      const fraction = span ? (scheduledTime - times[before.index]) / span : 0;
+      delay = before.delay + fraction * (after.delay - before.delay);
+    } else {
+      delay = (before ?? after).delay;
+    }
+    return { time: scheduledTime + delay, delay, source: "estimated" };
+  });
+}
 
-  // Trains currently running span three tables: yesterday's (base -1440),
-  // today's (base 0) and tomorrow's (base 1440). PATH tables are per
-  // calendar day, so the trains rolling just after midnight belong to
-  // yesterday's table and the ones about to roll after the next midnight to
-  // tomorrow's — even when the days share a dayKey and thus the same trip
-  // arrays. The 50-minute pairing window below can only ever hold one base
-  // of a given trip, so the three tables don't double-pair.
-  const today = new Date(nowMs);
-  const yesterday = new Date(today);
-  yesterday.setDate(yesterday.getDate() - 1);
-  const tomorrow = new Date(today);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  const tables = [
-    { dayKey: dayKeyFor(yesterday), base: -1440 },
-    { dayKey: dayKeyFor(today), base: 0 },
-    { dayKey: dayKeyFor(tomorrow), base: 1440 },
-  ];
-
-  // Pass 1: collect every plausible (trip, feed entry) pairing
-  const candidates = []; // { trip, key, absDiff, delay }
-  for (const { dayKey, base } of tables) {
-    for (const line of schedule.days[dayKey] ?? []) {
-      // Travel direction is encoded in the stop order, so the forward terminus
-      // is simply the last stop
-      const terminus = line.stops[line.stops.length - 1];
-      const lineColor = line.color.toUpperCase();
-
-      for (const trip of line.trips) {
-        // Absolute minutes per stop, applying the same midnight shift as
-        // search.js's collectTrips
-        const mins = trip.map((t) => (t === null ? null : toMinutes(t)));
-        const first = mins.find((t) => t !== null);
-        if (first === undefined) continue;
-
-        for (let s = 0; s < line.stops.length; s++) {
-          const t = mins[s];
-          if (t === null) continue;
-          const abs = base + t + (t < first ? 1440 : 0);
-          // The feed only lists the next ~30–45 min of trains, so only stop
-          // times near "now" can be paired (a just-missed stop still counts:
-          // the train may be running behind)
-          if (abs < mNow - GRACE_MIN || abs > mNow + RT_HORIZON_MIN) continue;
-          const entries = rt.stations[line.stops[s]];
-          if (!entries) continue;
-          for (let ei = 0; ei < entries.length; ei++) {
-            const e = entries[ei];
-            if ((FEED_TO_SCHED[e.target] ?? e.target) !== terminus) continue;
-            // Colors disambiguate same-terminus lines (e.g. HOB–WTC vs
-            // NWK–WTC, both listing "WTC" at Exchange Place); combined-service
-            // entries list several colors, one of which must be this line's
-            if (!e.colors.some((c) => c.toUpperCase() === lineColor)) continue;
-            const projected = (e.projectedMs - midnightMs) / 60000;
-            const diff = projected - abs;
-            // A train never meaningfully runs early (MAX_EARLY_MIN): a
-            // pairing on the early side beyond that is a misread — typically
-            // a leftover duplicate listing posing as the next trip — so it
-            // is rejected rather than stamped as a phantom "early" delay
-            if (diff < -MAX_EARLY_MIN || diff > MATCH_TOLERANCE_MIN) continue;
-            candidates.push({
-              trip,
-              key: `${line.stops[s]}|${ei}`,
-              absDiff: Math.abs(diff),
-              delay: Math.round(diff),
-            });
-          }
-        }
-      }
+// One model shared by search and the board. `trips` is keyed by raw trip
+// reference, then calendar-day base, then stop index: yesterday/tomorrow
+// copies of a weekday trip must not inherit today's predictions.
+// `matchedEntries` records assignments at every station, independently of
+// whether that station's anchor survives the cross-stop consistency check.
+export function buildRealtimeModel(schedule, rt, mNow, nowMs = Date.now()) {
+  if (!rt || nowMs - rt.fetchedAt > STALE_AFTER_MS) return null;
+  const midnightMs = nowMs - mNow * 60000;
+  const byStation = new Map();
+  const occurrences = [];
+  for (const base of [-1440, 0, 1440]) {
+    const date = new Date(nowMs);
+    date.setDate(date.getDate() + base / 1440);
+    for (const trip of collectTrips(schedule, date, base)) {
+      const occurrence = { ...trip, base, observations: [] };
+      occurrences.push(occurrence);
+      trip.times.forEach((time, index) => {
+        if (time === null || time < mNow - GRACE_MIN || time > mNow + RT_HORIZON_MIN) return;
+        const station = trip.stops[index];
+        if (!rt.stations[station]) return;
+        if (!byStation.has(station)) byStation.set(station, []);
+        byStation.get(station).push({ occurrence, index, time });
+      });
     }
   }
 
-  // Pass 2: greedy global matching by confidence — the closest pairing
-  // claims its trip and feed entry first, so one feed train can't inflate
-  // two timetable trips and vice versa
-  candidates.sort((a, b) => a.absDiff - b.absDiff);
-  const usedEntries = new Set();
-  const usedTrips = new Set();
-  for (const c of candidates) {
-    if (usedTrips.has(c.trip) || usedEntries.has(c.key)) continue;
-    usedTrips.add(c.trip);
-    usedEntries.add(c.key);
-    delays.set(c.trip, c.delay); // 0 = matched and on time
+  const matchedEntries = new Map();
+  for (const [station, stops] of byStation) {
+    stops.sort((a, b) => a.time - b.time);
+    const entries = rt.stations[station]; // normalizeRt already sorts by projected arrival
+    const candidates = [];
+    stops.forEach(({ occurrence, time }, left) => {
+      const terminus = occurrence.stops.at(-1);
+      const color = occurrence.line.color.toUpperCase();
+      entries.forEach((entry, right) => {
+        if ((FEED_TO_SCHED[entry.target] ?? entry.target) !== terminus) return;
+        if (!entry.colors.some((c) => c.toUpperCase() === color)) return;
+        const offsetMs = entry.projectedMs - (midnightMs + time * 60000);
+        if (offsetMs < -MAX_EARLY_MIN * 60000 || offsetMs > MATCH_TOLERANCE_MIN * 60000) return;
+        candidates.push({ left, right, cost: Math.abs(offsetMs), tieCost: (left - right) ** 2 });
+      });
+    });
+    const assigned = new Set();
+    for (const { left, right } of minimumCostMatching(stops.length, entries.length, candidates)) {
+      const { occurrence, index, time } = stops[left];
+      const entry = entries[right];
+      const projected = (entry.projectedMs - midnightMs) / 60000;
+      occurrence.observations.push({
+        index,
+        time: projected,
+        delay: projected - time,
+        updatedMs: entry.updatedMs ?? rt.fetchedAt,
+      });
+      assigned.add(entry);
+    }
+    matchedEntries.set(station, assigned);
   }
-  return delays;
+
+  const trips = new Map();
+  for (const { raw, base, times, observations } of occurrences) {
+    if (!observations.length) continue;
+    if (!trips.has(raw)) trips.set(raw, new Map());
+    trips.get(raw).set(base, stopPredictions(times, observations));
+  }
+  return { trips, matchedEntries };
 }

@@ -119,11 +119,20 @@ console.log("leg stop sequences");
   const sched = mkSchedule();
   // The 10:00 trip skips EXC and runs +5 (feed-observed) — NEW 10:11, WTC 10:20
   sched.days.weekday[0].trips[1] = ["10:00", "10:06", null, "10:15"];
-  const adjust = new Map([[sched.days.weekday[0].trips[1], 5]]);
+  // Inject per-stop predictions for today's occurrence, not a trip-wide delay.
+  const predictions = [600, 606, null, 615].map((t) =>
+    t === null ? null : { time: t + 5, delay: 5, source: "live" },
+  );
+  const adjust = {
+    trips: new Map([[sched.days.weekday[0].trips[1], new Map([[0, predictions]])]]),
+  };
   const js = findJourneys(sched, "NEW", "WTC", 625, 600, adjust);
   check("one delay-adjusted journey", js.length === 1 && js[0].depAbs === 611);
   const leg = js[0].legs[0];
-  check("leg stamps the trip's delay", leg.delay === 5);
+  check(
+    "endpoints carry their own delay and provenance",
+    leg.board.delay === 5 && leg.alight.delay === 5 && leg.board.source === "live",
+  );
   check(
     "stops list the called stops only, delay-adjusted",
     leg.stops.map((s) => `${s.stop}@${s.time}`).join(",") === "NEW@611,WTC@620",

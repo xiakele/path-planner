@@ -3,9 +3,8 @@
 // `pnpm test:departures`. All clocks are injected (fixed mNow / nowMs), so
 // results are reproducible regardless of when the harness runs.
 //
-// Fixture trick: the board resolves "today" via the real clock, so the
-// synthetic schedule fills weekday/saturday/sunday with the same lines and
-// the tests work on any calendar day.
+// The fixed clock is passed through matching and routing. Synthetic schedules
+// fill all day types so midnight tests can reuse the same train arrays.
 
 import { DEPARTURES_WINDOW_MIN, findDepartures } from "../src/departures.js";
 import { normalizeRt } from "../src/realtime.js";
@@ -25,7 +24,7 @@ function check(name, cond) {
 
 // Fixed clock: "now" is 10:00 AM in the absolute-minute model
 const M_NOW = 600;
-const NOW_MS = Date.now();
+const NOW_MS = new Date(2026, 9, 28, 10, 0).getTime();
 const MIDNIGHT_MS = NOW_MS - M_NOW * 60000;
 
 // Absolute minutes -> a projected feed timestamp consistent with the clock
@@ -216,14 +215,10 @@ console.log("feed-only extras");
   );
 }
 
-console.log("same-minute collision collapse");
+console.log("multiple observations do not create phantom trains");
 {
-  // One train's entries at consecutive stations, but a trip pairs with at
-  // most one entry: T2 (10:14) claims its JSQ entry on time, and the
-  // leftover GRO entry — T2's own time there — is claimed by T1 (10:04) as
-  // +10, landing both trains on the same adjusted departure minute. The
-  // board must collapse them into a single row (the journey results already
-  // dedupe per departure minute), keeping the on-time one
+  // Regression for the old global one-entry-per-trip rule: T2's predictions
+  // at two stations must both belong to T2, not push T1 onto T2's minute.
   const lines = [
     mkLine(
       "Journal Square - World Trade Center",
@@ -245,7 +240,7 @@ console.log("same-minute collision collapse");
       fetchedAt: NOW_MS,
       stations: {
         JSQ: [entry("WTC", "FF9900", 614)], // T2 on time at JSQ
-        GRO: [entry("WTC", "FF9900", 620)], // T2 on time at GRO -> leftover for T1
+        GRO: [entry("WTC", "FF9900", 620)], // T2 on time at GRO as well
       },
     },
     NOW_MS,
@@ -258,21 +253,131 @@ console.log("same-minute collision collapse");
     plain.map((r) => r.depAbs).join(",") === "604,614",
   );
 
-  // With the pairing, T1 shifts onto T2's minute: one row, on time
+  // Both stops match T2; T1 remains visible at its original timetable time.
   const rows = findDepartures(sched, "JSQ", M_NOW, NOW_MS, rt);
-  check("collision collapses to a single row", rows.filter((r) => r.depAbs === 614).length === 1);
+  check("one row represents the observed train", rows.filter((r) => r.depAbs === 614).length === 1);
   check("the kept row is the on-time one", rows.find((r) => r.depAbs === 614).delay === 0);
   check("the phantom-late duplicate is gone", !rows.some((r) => r.delay === 10));
+  check("the earlier timetable train is retained", rows.length === 2 && rows[0].depAbs === 604);
 
-  // Same collapse in route-scoped mode (both trains are direct rides to WTC)
+  // The same train identities are preserved in route-scoped mode.
   const scoped = findDepartures(sched, "JSQ", M_NOW, NOW_MS, rt, "WTC");
   check(
-    "scoped board collapses the collision too",
-    scoped.length === 1 && scoped[0].depAbs === 614,
+    "scoped board retains both distinct trains too",
+    scoped.length === 2 && scoped[1].depAbs === 614,
   );
   check(
-    "kept scoped row is on time with its arrival",
-    scoped[0].delay === 0 && scoped[0].arrAbs === 630,
+    "observed scoped row is on time with its arrival",
+    scoped[1].delay === 0 && scoped[1].arrAbs === 630,
+  );
+}
+
+console.log("actual assignments and stop-local board times");
+{
+  // Both predictions are close to one timetable stop, but only one belongs
+  // to it. A proximity check would incorrectly hide the second as well.
+  const lines = [mkLine("JSQ - WTC", "#D93A30", ["JSQ", "WTC"], [["10:00", "10:20"]])];
+  const sched = { days: { weekday: lines, saturday: lines, sunday: lines } };
+  const rt = normalizeRt(
+    {
+      fetchedAt: NOW_MS,
+      stations: {
+        JSQ: [entry("WTC", "D93A30", 603), entry("WTC", "D93A30", 609)],
+        WTC: [entry("WTC", "D93A30", 628)],
+      },
+    },
+    NOW_MS,
+  );
+  const rows = findDepartures(sched, "JSQ", M_NOW, NOW_MS, rt, "WTC");
+  const known = rows.find((r) => !r.fromFeed);
+  check(
+    "boarding prediction is independent of the terminal prediction",
+    known.depAbs === 603 &&
+      known.delay === 3 &&
+      known.arrAbs === 628 &&
+      known.legs[0].alight.delay === 8,
+  );
+  check("board labels direct boarding evidence as live", known.source === "live");
+  // UI popup identity must follow the schedule occurrence, not its changing ETA.
+  const shiftedRt = {
+    ...rt,
+    stations: {
+      ...rt.stations,
+      JSQ: rt.stations.JSQ.map((e) => ({ ...e, projectedMs: e.projectedMs + 60000 })),
+    },
+  };
+  const shifted = findDepartures(sched, "JSQ", M_NOW, NOW_MS, shiftedRt, "WTC").find(
+    (r) => !r.fromFeed,
+  );
+  check(
+    "row and leg identities survive changed departure predictions",
+    shifted.id === known.id &&
+      shifted.legs[0].tripId === known.legs[0].tripId &&
+      shifted.depAbs !== known.depAbs,
+  );
+  check(
+    "unassigned nearby entry is retained as a feed-only extra",
+    rows.filter((r) => r.fromFeed).length === 1 && rows.find((r) => r.fromFeed).depAbs === 609,
+  );
+  const tooEarly = normalizeRt(
+    { fetchedAt: NOW_MS, stations: { JSQ: [entry("WTC", "D93A30", 606)] } },
+    NOW_MS,
+  );
+  const futureLines = [mkLine("JSQ - WTC", "#D93A30", ["JSQ", "WTC"], [["10:10", "10:30"]])];
+  const future = { days: { weekday: futureLines, saturday: futureLines, sunday: futureLines } };
+  check(
+    "entry rejected by the early guard is not hidden by a looser board check",
+    findDepartures(future, "JSQ", M_NOW, NOW_MS, tooEarly).some(
+      (r) => r.fromFeed && r.depAbs === 606,
+    ),
+  );
+  const stale = { ...rt, fetchedAt: NOW_MS - 120001 };
+  const plain = findDepartures(sched, "JSQ", M_NOW, NOW_MS, stale);
+  check(
+    "stale snapshot supplies neither delays nor live extras",
+    plain.length === 1 && plain[0].depAbs === 600 && plain[0].source === "timetable",
+  );
+}
+
+console.log("same-displayed-minute collision collapse");
+{
+  // Two GRO predictions match two trips. Only T2 has a JSQ prediction;
+  // T1's inferred JSQ time rounds to the same minute and must dedupe there.
+  const lines = [
+    mkLine(
+      "JSQ - WTC",
+      "#FF9900",
+      ["JSQ", "GRO", "WTC"],
+      [
+        ["10:04", "10:10", "10:20"],
+        ["10:14", "10:20", "10:30"],
+      ],
+    ),
+  ];
+  const sched = { days: { weekday: lines, saturday: lines, sunday: lines } };
+  const rt = normalizeRt(
+    {
+      fetchedAt: NOW_MS,
+      stations: {
+        JSQ: [entry("WTC", "FF9900", 614 + 20 / 60)],
+        GRO: [entry("WTC", "FF9900", 620), entry("WTC", "FF9900", 624)],
+      },
+    },
+    NOW_MS,
+  );
+  const rows = findDepartures(sched, "JSQ", M_NOW, NOW_MS, rt);
+  check(
+    "fractional predictions dedupe by the displayed minute",
+    rows.length === 1 && Math.round(rows[0].depAbs) === 614,
+  );
+  check(
+    "smaller boarding offset survives the collision",
+    rows[0].delay < 1 && rows[0].source === "live",
+  );
+  const scoped = findDepartures(sched, "JSQ", M_NOW, NOW_MS, rt, "WTC");
+  check(
+    "scoped rows preserve their own arrival offset when deduping",
+    scoped.length === 1 && scoped[0].arrAbs === 634 && scoped[0].legs[0].alight.delay === 4,
   );
 }
 
@@ -402,7 +507,7 @@ console.log("route-scoped board");
     "delayed scoped row shifts departure and arrival",
     late.length === 1 && late[0].depAbs === 604 && late[0].arrAbs === 616,
   );
-  check("delayed scoped row stamps the leg delay", late[0].legs[0].delay === 5);
+  check("delayed scoped row stamps the boarding offset", late[0].legs[0].board.delay === 5);
 
   // Feed extras in the scoped board: only an entry headed to exactly the
   // destination is provably rideable; anything else is dropped

@@ -523,10 +523,10 @@ select:focus-visible {
   gap: 0.5em;
 }
 
-/* Times indent to line up under the line name (chip 0.7em + gap 0.5em) and
-   with the transfer rows below */
+/* Times indent under the line name and may wrap even on desktop: independent
+   endpoint offsets/source labels can make one itinerary longer than a card. */
 .leg-times {
-  white-space: nowrap;
+  white-space: normal;
   padding-left: 1.2em;
 }
 
@@ -591,7 +591,15 @@ select:focus-visible {
   text-decoration: line-through;
 }
 
-/* Per-leg live badge: on time (green) / late (gold) / early (muted) */
+/* Per-stop evidence stays compact beside a time, including in mobile popups. */
+.time-source {
+  color: var(--text-faint);
+  font-size: 0.65em;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+/* Boarding-stop badge: direct live claims use status colors; estimates do not. */
 .leg-badge {
   margin-left: auto;
   flex-shrink: 0;
@@ -924,10 +932,6 @@ select:focus-visible {
 
   .tag {
     margin-left: 0;
-  }
-
-  .leg-times {
-    white-space: normal;
   }
 
   .route-picker {

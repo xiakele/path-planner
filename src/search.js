@@ -28,19 +28,34 @@ function toMinutes(hhmm) {
 }
 
 // All trips of one calendar day, with stop times shifted to absolute minutes.
-// `adjust` (from realtime.js's buildDelays, keyed by the raw trip arrays)
-// optionally shifts a trip's whole run by its observed real-time delay.
+// `adjust` is realtime.js's per-stop model. Predictions belong to a specific
+// calendar-day occurrence, and times retain sub-minute precision for routing.
 // Exported for departures.js's board, which reuses the same trip model.
 export function collectTrips(schedule, date, base, adjust) {
   const out = [];
-  for (const line of schedule.days[dayKeyFor(date)] ?? []) {
-    for (const trip of line.trips) {
+  const calendarDay = `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`;
+  for (const [lineIndex, line] of (schedule.days[dayKeyFor(date)] ?? []).entries()) {
+    for (const [tripIndex, trip] of line.trips.entries()) {
       const mins = trip.map((t) => (t === null ? null : toMinutes(t)));
       const first = mins.find((t) => t !== null);
-      let times = mins.map((t) => (t === null ? null : base + t + (t < first ? 1440 : 0)));
-      const delay = adjust?.get(trip);
-      if (delay) times = times.map((t) => (t === null ? null : t + delay));
-      out.push({ line, stops: line.stops, times, raw: trip });
+      const scheduledTimes = mins.map((t) =>
+        t === null ? null : base + t + (t < first ? 1440 : 0),
+      );
+      const predictions = adjust?.trips.get(trip)?.get(base);
+      const times = scheduledTimes.map((t, index) => predictions?.[index]?.time ?? t);
+      // Schedule identity survives changed predictions, so an open popup can
+      // follow the same train across polls instead of closing when it shifts.
+      const id = `${calendarDay}|${lineIndex}|${tripIndex}`;
+      out.push({
+        id,
+        line,
+        stops: line.stops,
+        times,
+        scheduledTimes,
+        predictions,
+        raw: trip,
+        base,
+      });
     }
   }
   return out;
@@ -87,23 +102,29 @@ export function continuation(allTrips, alights, budget) {
 }
 
 // One reconstructed leg ({trip, board, alight}) in the shape the UI uses:
-// line identity, endpoints, the trip's observed real-time delay (undefined =
-// no live match) and every stop the train actually calls at between boarding
-// and alighting, each with its (delay-adjusted) time — the fuel for the
+// line identity, endpoints, and every stop the train actually calls at
+// between boarding and alighting. Each stop carries its own offset, original
+// timetable time, and live/estimated/timetable provenance — the fuel for the
 // stop-by-stop popup. Stops with a null time (stations this trip skips) are
 // omitted. Exported for departures.js, which builds the same legs for its
 // route-scoped board.
-export function toLeg({ trip: t, board, alight }, adjust) {
+export function toLeg({ trip: t, board, alight }) {
   const stops = [];
   for (let k = board; k <= alight; k++) {
     if (t.times[k] === null) continue;
-    stops.push({ stop: t.stops[k], time: t.times[k] });
+    stops.push({
+      stop: t.stops[k],
+      time: t.times[k],
+      scheduledTime: t.scheduledTimes[k],
+      delay: t.predictions?.[k]?.delay,
+      source: t.predictions?.[k]?.source ?? "timetable",
+    });
   }
   return {
+    tripId: t.id,
     line: t.line,
-    board: { stop: t.stops[board], time: t.times[board] },
-    alight: { stop: t.stops[alight], time: t.times[alight] },
-    delay: adjust?.get(t.raw),
+    board: stops[0],
+    alight: stops.at(-1),
     stops,
   };
 }
@@ -155,19 +176,17 @@ export function loopsThroughOrigin(legs, origin) {
 // Journeys also never call again at the origin — looping continuations are
 // pruned (see loopsThroughOrigin).
 //
-// `adjust` (optional, from realtime.js's buildDelays) shifts trips by their
-// observed real-time delays before searching, so catchability, transfers and
-// arrivals reflect reality; legs carry the applied `delay` (undefined =
-// timetable-only, 0 = matched and on time) plus their per-stop times
-// (see toLeg) for the stop-by-stop popup.
-export function findJourneys(schedule, from, to, enteredMinutes, mNow, adjust) {
+// `adjust` optionally applies stop-specific predictions before searching:
+// boarding uses the origin's prediction, arrival uses the alighting stop's,
+// and transfers use both independently. Inject nowMs for fixed-clock tests.
+export function findJourneys(schedule, from, to, enteredMinutes, mNow, adjust, nowMs = Date.now()) {
   if (from === to) return [];
   const target = enteredMinutes < mNow ? enteredMinutes + 1440 : enteredMinutes;
 
   // Yesterday's table is collected too (at base -1440) so that just after
   // midnight the before-midnight trains can still appear as missed context —
   // a PATH table is per calendar day, so those trips belong to yesterday
-  const today = new Date();
+  const today = new Date(nowMs);
   const yesterday = new Date(today);
   yesterday.setDate(today.getDate() - 1);
   const tomorrow = new Date(today);
@@ -218,7 +237,7 @@ export function findJourneys(schedule, from, to, enteredMinutes, mNow, adjust) {
     if (loopsThroughOrigin(legs, from)) continue;
 
     const journey = {
-      legs: legs.map((l) => toLeg(l, adjust)),
+      legs: legs.map((l) => toLeg(l)),
       depAbs,
       arrAbs: arrival.time,
       departed,
@@ -227,7 +246,7 @@ export function findJourneys(schedule, from, to, enteredMinutes, mNow, adjust) {
     // Different first trains can produce the same routing; per departure
     // minute keep the journey with the fewest legs (then the earliest
     // arrival) so the results read as distinct alternatives
-    const key = journey.depAbs;
+    const key = Math.round(journey.depAbs); // dedupe the minute actually shown in the UI
     const prev = seen.get(key);
     if (
       !prev ||

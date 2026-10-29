@@ -16,8 +16,10 @@ The user-facing overview is in `README.md`.
   can be tested directly from Node. `collectTrips` / `continuation` /
   `reconstruct` / `toLeg` are exported for `departures.js`'s board and the
   UI's leg rendering.
-- `src/realtime.js` — pairs feed entries with timetable trips into per-trip
-  delays; pure like search.js, tested by `scripts/test-realtime.mjs`.
+- `src/realtime.js` — pairs feed entries with scheduled stops into per-stop
+  predictions/estimates; pure like search.js, tested by `scripts/test-realtime.mjs`.
+- `src/matching.js` — pure minimum-cost maximum bipartite assignment, also
+  tested (against exhaustive small graphs) by `scripts/test-realtime.mjs`.
 - `src/departures.js` — live departure board at one station (timetable +
   delay merge, feed-only extras; optional route-scoped mode reusing
   search.js's connection machinery); pure like search.js, tested by
@@ -85,24 +87,31 @@ The user-facing overview is in `README.md`.
   grays.
 - Real-time layer: the feed calls Grove/Exchange `GRV`/`EXP` (timetable:
   `GRO`/`EXC`), `lineColor` may be a comma list for combined services, and
-  there are no trip IDs — pairing is nearest-projected-arrival per
-  (station, terminus, color) with a greedy global match
-  (`src/realtime.js`). Two mispair guards sit on top: duplicate listings of
+  there are no trip IDs — each station maximizes compatible matches, then
+  minimizes total absolute timestamp offset (`src/matching.js`), with
+  deterministic chronological tie-breaking. Two mispair guards sit on top: duplicate listings of
   one train (same terminus, shared color, within `DUPLICATE_ENTRY_MIN`)
   collapse in `normalizeRt`, and pairings that would make a trip leave more
   than `MAX_EARLY_MIN` (3) early are rejected — trains never meaningfully
-  run early, so those are always misreads. `findJourneys` takes the
-  resulting delay Map as an optional 6th arg and stamps `delay` on each leg
-  (undefined = timetable only, 0 = on time). Legs/`depAbs`/`arrAbs` are
-  then already delay-adjusted — render them as-is and derive "was" times
-  as `time - delay`.
+  run early, so those are treated as misreads. `buildRealtimeModel` returns
+  `{trips, matchedEntries}`: `trips` maps raw trip -> calendar-day base ->
+  per-stop predictions. `findJourneys` takes this as its optional 6th arg
+  (and an injectable `nowMs` as its 7th). Each leg's `board`, `alight`, and
+  `stops` carry `{stop, time, scheduledTime, delay, source}`; source is
+  `live`, `estimated`, or `timetable`. Missing stops interpolate offsets by
+  scheduled travel time, or carry the nearest anchor outside the range.
+  Backward-in-time anchors favor newer observations, then smaller offsets.
+  There is no leg-wide delay: use each endpoint's own offset/source.
+  Routing retains fractional minutes; presentation and minute deduplication
+  round. Render adjusted times as-is, using `scheduledTime` for "was" times.
 - Departure board (`src/departures.js`): rows are the delay-adjusted
   timetable departures at the station within `DEPARTURES_WINDOW_MIN` (45)
   of now, **nearest departure first** — the opposite of the journey
   results' latest-first ranking. A stop at a line's final station is an
-  arrival, not a departure (skipped); feed entries that match no timetable
-  train (same terminus, color, within `MATCH_TOLERANCE_MIN`) become
-  "live" extra rows with `line: null`. The optional 6th arg `to` scopes
+  arrival, not a departure (skipped); feed entries absent from the shared
+  matcher's `matchedEntries` become "live" extra rows with `line: null`.
+  Rejected inconsistent anchors remain assigned, not extra trains.
+  The optional 6th arg `to` scopes
   the board to a destination: rows are first legs of journeys there
   (direct or ≤ `MAX_TRANSFERS`, via `search.js`'s exported
   `continuation`/`reconstruct`) carrying `arrAbs` + `legs`; journeys must
@@ -113,8 +122,8 @@ The user-facing overview is in `README.md`.
   prunes those rows; the returning train appears as its own row. Scoped
   extras are gated on
   `terminus === to`. Every timetable row (scoped or not) carries `legs`
-  built by search.js's exported `toLeg`, each leg with per-stop
-  `{stop, time}` pairs (delay-adjusted, skipped stops omitted) — scoped rows
+  built by search.js's exported `toLeg`, each leg with
+  per-stop predictions with provenance (skipped stops omitted) — scoped rows
   the connection path, all-trains rows the single remaining ride to the
   terminus; these power the click-through stop popup in `src/app.js` (one
   page-level dialog, live-refreshed by `syncPopup` on each re-render, closed

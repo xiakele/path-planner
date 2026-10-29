@@ -3,7 +3,7 @@
 // Journey search lives in search.js.
 
 import { findJourneys } from "./search.js";
-import { buildDelays, normalizeRt, STALE_AFTER_MS } from "./realtime.js";
+import { buildRealtimeModel, normalizeRt, STALE_AFTER_MS } from "./realtime.js";
 import { DEPARTURES_WINDOW_MIN, findDepartures } from "./departures.js";
 
 const STATIONS = {
@@ -131,9 +131,10 @@ function lineShortName(line) {
   return `${a} – ${b}${via}`;
 }
 
-function nowMinutes() {
-  const d = new Date();
-  return d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60;
+function nowMinutes(nowMs = Date.now()) {
+  const d = new Date(nowMs);
+  // Keep the same fractional clock as feed timestamps; round only for display.
+  return d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60 + d.getMilliseconds() / 60000;
 }
 
 // "12" -> 0, "1".."11" -> 1..11; plus meridiem offset
@@ -241,14 +242,46 @@ function offsetText(depAbs, mNow) {
   return `<b>departed</b> ${-diff} min ago`;
 }
 
-// Badge for an observed delay (undefined = no live match, so no badge):
-// on time (green) / late (gold) / early (muted). Shared by journey legs and
-// the departure board rows.
-function delayBadge(delay) {
+// Badges describe the boarding stop, never a whole train. Inferred offsets
+// are explicitly estimated; round only presentation, not routing inputs.
+function delayBadge(delay, source) {
   if (delay === undefined) return "";
-  if (delay > 0) return `<span class="leg-badge leg-badge_late">+${delay} min</span>`;
-  if (delay < 0) return `<span class="leg-badge leg-badge_early">${-delay} min early</span>`;
-  return `<span class="leg-badge leg-badge_ontime">on time</span>`;
+  const rounded = Math.round(delay);
+  const prefix = source === "estimated" ? "est. " : "live · ";
+  const text = rounded > 0 ? `+${rounded} min` : rounded < 0 ? `${-rounded} min early` : "on time";
+  const style =
+    source === "estimated"
+      ? ""
+      : rounded > 0
+        ? " leg-badge_late"
+        : rounded < 0
+          ? ""
+          : " leg-badge_ontime";
+  return `<span class="leg-badge${style}">${prefix}${text}</span>`;
+}
+
+// Each endpoint/stop exposes its own evidence, including timetable-only
+// fallbacks, so an estimated arrival cannot masquerade as a live prediction.
+function timeSource(source = "timetable") {
+  const text = source === "estimated" ? "est." : source === "live" ? "live" : "sched.";
+  const title =
+    source === "estimated"
+      ? "Estimated from other stops"
+      : source === "live"
+        ? "Prediction at this stop"
+        : "Timetable only";
+  return ` <small class="time-source" title="${title}">${text}</small>`;
+}
+
+// Sub-minute shifts can round to the same displayed time; don't strike out
+// an identical "was" time, but retain the full precision in the data model.
+function wasTime(point, className) {
+  if (!point || Math.round(point.time) === Math.round(point.scheduledTime)) return "";
+  return ` <s class="${className}">${fmtTime(point.scheduledTime)}</s>`;
+}
+
+function pointTime(point) {
+  return `<b>${fmtTime(point.time)}</b>${wasTime(point, "leg-was")}${timeSource(point.source)}`;
 }
 
 // ---------- real-time feed ----------
@@ -312,15 +345,14 @@ function tickStatus() {
 // is the journey/row currently displayed
 let popupState = null;
 
-// Journey results dedupe per departure minute, so depAbs alone identifies a
-// card within one query; on the board two trains can share a departure
-// minute, so the terminus and line color disambiguate
+// Timetable identities survive changed departure predictions. Feed-only
+// entries have no train IDs, so their time/destination remain the fallback.
 function journeyKey(j) {
-  return String(j.depAbs);
+  return `${j.legs[0].tripId}|${j.legs[0].board.stop}`;
 }
 
 function departureKey(row) {
-  return `${row.depAbs}|${row.terminus}|${row.line ? row.line.color : "feed"}`;
+  return row.id ?? `${row.depAbs}|${row.terminus}|feed`;
 }
 
 // "(next day)" tag for absolute minutes past midnight — same convention the
@@ -331,15 +363,15 @@ function nextDayTag(t) {
 
 // One stop row of the timeline: colored dot, station name and its
 // (delay-adjusted) ETA, with the timetable "was" struck through when the
-// leg's train runs off-timetable. Origin/destination rows get highlighted.
-function stopRow(stop, time, delay, color, endpoint) {
-  const was = delay ? ` <s class="leg-was">${fmtTime(time - delay)}</s>` : "";
+// stop's own prediction differs. Origin/destination rows get highlighted.
+function stopRow(point, color, endpoint) {
+  const { stop, time } = point;
   const style = color ? ` style="--c:${color}"` : "";
   return `
       <div class="popup__stop${endpoint ? " popup__stop_endpoint" : ""}"${style}>
         <span class="popup__dot"></span>
         <span class="popup__name">${STATIONS[stop] ?? stop}</span>
-        <span class="popup__time"><b>${fmtTime(time)}</b>${was}${nextDayTag(time)}</span>
+        <span class="popup__time">${pointTime(point)}${nextDayTag(time)}</span>
       </div>`;
 }
 
@@ -361,12 +393,12 @@ function legsTimelineHtml(legs) {
         <div class="leg-head">
           <span class="line-chip" style="--c:${leg.line.color}"></span>
           <span class="line-name">${lineShortName(leg.line)}</span>
-          ${delayBadge(leg.delay)}
+          ${delayBadge(leg.board.delay, leg.board.source)}
         </div>
         ${leg.stops
           .map((s, si) => {
             const endpoint = (li === 0 && si === 0) || (last && si === leg.stops.length - 1);
-            return stopRow(s.stop, s.time, leg.delay, leg.line.color, endpoint);
+            return stopRow(s, leg.line.color, endpoint);
           })
           .join("")}
       </div>`;
@@ -379,14 +411,12 @@ function legsTimelineHtml(legs) {
 // the body is the stop-by-stop timeline
 function renderJourneyPopup(journey) {
   const { legs, depAbs, arrAbs } = journey;
-  const depDelay = legs[0]?.delay;
-  const arrDelay = legs[legs.length - 1]?.delay;
-  const depWas = depDelay ? ` <s class="dep-was">${fmtTime(depAbs - depDelay)}</s>` : "";
-  const arrWas = arrDelay ? ` <s class="arr-was">${fmtTime(arrAbs - arrDelay)}</s>` : "";
+  const depWas = wasTime(legs[0]?.board, "dep-was");
+  const arrWas = wasTime(legs.at(-1)?.alight, "arr-was");
   popupTitle.innerHTML = `
-    <b>${fmtTime(depAbs)}</b>${depWas}${nextDayTag(depAbs)}
+    <b>${fmtTime(depAbs)}</b>${depWas}${timeSource(legs[0]?.board.source)}${nextDayTag(depAbs)}
     <span class="arrow">→</span>
-    <b>${fmtTime(arrAbs)}</b>${arrWas}${nextDayTag(arrAbs)}
+    <b>${fmtTime(arrAbs)}</b>${arrWas}${timeSource(legs.at(-1)?.alight.source)}${nextDayTag(arrAbs)}
     <span class="dep-station">· ${fmtDur(arrAbs - depAbs)}</span>`;
   popupBody.innerHTML = legsTimelineHtml(legs);
 }
@@ -396,12 +426,11 @@ function renderJourneyPopup(journey) {
 // get the full timeline; feed-only extras have no timetable behind them, so
 // the popup notes that instead of listing stops
 function renderDeparturePopup(row) {
-  const was = row.delay ? ` <s class="dep-was">${fmtTime(row.depAbs - row.delay)}</s>` : "";
+  const was = wasTime(row.legs?.[0]?.board, "dep-was");
   let arrHtml = "";
   if (row.arrAbs !== undefined) {
-    const arrDelay = row.legs[row.legs.length - 1]?.delay;
-    const arrWas = arrDelay ? ` <s class="arr-was">${fmtTime(row.arrAbs - arrDelay)}</s>` : "";
-    arrHtml = ` <span class="arrow">→</span> <b>${fmtTime(row.arrAbs)}</b>${arrWas}${nextDayTag(row.arrAbs)} <span class="dep-station">· ${fmtDur(row.arrAbs - row.depAbs)}</span>`;
+    const arrWas = wasTime(row.legs.at(-1)?.alight, "arr-was");
+    arrHtml = ` <span class="arrow">→</span> <b>${fmtTime(row.arrAbs)}</b>${arrWas}${timeSource(row.legs.at(-1)?.alight.source)}${nextDayTag(row.arrAbs)} <span class="dep-station">· ${fmtDur(row.arrAbs - row.depAbs)}</span>`;
   }
   const terminusName = STATIONS[row.terminus] ?? row.terminus;
   if (row.fromFeed) {
@@ -418,7 +447,7 @@ function renderDeparturePopup(row) {
   // All-trains rows have no destination arrival to headline — name the
   // terminus instead, matching the card's own line identity ("to …")
   const dirHtml = arrHtml || ` <span class="arrow">→</span> <b>to ${terminusName}</b>`;
-  popupTitle.innerHTML = `<b>${fmtTime(row.depAbs)}</b>${was}${nextDayTag(row.depAbs)}${dirHtml}`;
+  popupTitle.innerHTML = `<b>${fmtTime(row.depAbs)}</b>${was}${timeSource(row.source)}${nextDayTag(row.depAbs)}${dirHtml}`;
   popupBody.innerHTML = legsTimelineHtml(row.legs);
 }
 
@@ -485,11 +514,11 @@ function makeClickable(item, open) {
 // ---------- rendering ----------
 
 function renderResults(from, to, targetMinutes) {
-  const mNow = nowMinutes();
-  // Trips observed running off-timetable are shifted before searching, so
-  // catchability, transfers and arrivals reflect real-time reality
-  const adjust = buildDelays(schedule, rt, mNow);
-  const journeys = findJourneys(schedule, from, to, targetMinutes, mNow, adjust);
+  // One clock/model for both matching and routing, including day boundaries.
+  const nowMs = Date.now();
+  const mNow = nowMinutes(nowMs);
+  const adjust = buildRealtimeModel(schedule, rt, mNow, nowMs);
+  const journeys = findJourneys(schedule, from, to, targetMinutes, mNow, adjust, nowMs);
   // If the stop popup is open over this list, move it onto the fresh
   // journeys (a train that vanished closes it) — see syncPopup
   syncPopup("journey", journeys, journeyKey);
@@ -529,29 +558,22 @@ function renderResults(from, to, targetMinutes) {
     // arrival and total duration follow at a smaller size. Each time carries
     // its own "(next day)" tag and a struck-through timetable "was" when its
     // leg is running off-timetable
-    const depDelay = legs[0]?.delay;
-    const arrDelay = legs[legs.length - 1]?.delay;
-    const depWas = depDelay ? ` <s class="dep-was">${fmtTime(depAbs - depDelay)}</s>` : "";
-    const arrWas = arrDelay ? ` <s class="arr-was">${fmtTime(arrAbs - arrDelay)}</s>` : "";
+    const depWas = wasTime(legs[0]?.board, "dep-was");
+    const arrWas = wasTime(legs.at(-1)?.alight, "arr-was");
     const depNext = depAbs >= 1440 ? " <span class='time-nextday'>(next day)</span>" : "";
     const arrNext = arrAbs >= 1440 ? " <span class='time-nextday'>(next day)</span>" : "";
     item.innerHTML = `
       <div class="time-list__main">
-        <span class="time-list__text">${fmtTime(depAbs)}${depWas}${depNext}</span>
-        <span class="time-list__arr"><span class="arrow">→</span> ${fmtTime(arrAbs)}${arrWas}${arrNext}</span>
+        <span class="time-list__text">${fmtTime(depAbs)}${depWas}${timeSource(legs[0]?.board.source)}${depNext}</span>
+        <span class="time-list__arr"><span class="arrow">→</span> ${fmtTime(arrAbs)}${arrWas}${timeSource(legs.at(-1)?.alight.source)}${arrNext}</span>
         <span class="dep-station">· ${fmtDur(arrAbs - depAbs)}</span>
         ${idx === suggestedIdx ? "<span class='tag'>suggested</span>" : ""}
       </div>
       <div class="time-list__legs">
         ${legs
           .map((leg, li) => {
-            // Per-leg live badge from the matched feed entry; adjusted times
-            // with the timetable time struck through when they differ
-            const badge = delayBadge(leg.delay);
-            const times = (t) =>
-              leg.delay
-                ? `<b>${fmtTime(t)}</b> <s class="leg-was">${fmtTime(t - leg.delay)}</s>`
-                : `<b>${fmtTime(t)}</b>`;
+            // Boarding and alighting can have different offsets and sources.
+            const badge = delayBadge(leg.board.delay, leg.board.source);
             // Identity row (chip + short line name + badge), times below it —
             // nothing shares a line, so nothing gets cut off
             const legRow = `
@@ -561,10 +583,10 @@ function renderResults(from, to, targetMinutes) {
               <span class="line-name">${lineShortName(leg.line)}</span>
               ${badge}
             </div>
-            <div class="leg-times">${times(leg.board.time)} ${STATIONS[leg.board.stop]} → ${times(leg.alight.time)} ${STATIONS[leg.alight.stop]}</div>
+            <div class="leg-times">${pointTime(leg.board)} ${STATIONS[leg.board.stop]} → ${pointTime(leg.alight)} ${STATIONS[leg.alight.stop]}</div>
           </div>`;
             if (li === legs.length - 1) return legRow;
-            const wait = legs[li + 1].board.time - leg.alight.time;
+            const wait = Math.round(legs[li + 1].board.time - leg.alight.time);
             return `${legRow}
           <div class="time-list__transfer">transfer at ${STATIONS[leg.alight.stop]} · wait ${wait} min</div>`;
           })
@@ -605,11 +627,12 @@ function showResults() {
 // "what's next".
 function renderDepartures(board) {
   const { station, to, mode } = board;
-  const mNow = nowMinutes();
+  const nowMs = Date.now();
+  const mNow = nowMinutes(nowMs);
   const rows =
     mode === "route"
-      ? findDepartures(schedule, station, mNow, Date.now(), rt, to)
-      : findDepartures(schedule, station, mNow, Date.now(), rt);
+      ? findDepartures(schedule, station, mNow, nowMs, rt, to)
+      : findDepartures(schedule, station, mNow, nowMs, rt);
   // If the stop popup is open over this list, move it onto the fresh rows (a
   // train that left the window closes it) — see syncPopup
   syncPopup("departure", rows, departureKey);
@@ -654,17 +677,16 @@ function renderDepartures(board) {
     item.className = "time-list__item" + (departed ? " time-list__item_departed" : "");
     // Headline time (delay-adjusted, "(next day)" tag when past midnight)
     // with the timetable "was" struck through when the train runs late
-    const was = row.delay ? ` <s class="dep-was">${fmtTime(row.depAbs - row.delay)}</s>` : "";
+    const was = wasTime(row.legs?.[0]?.board, "dep-was");
     const next = row.depAbs >= 1440 ? " <span class='time-nextday'>(next day)</span>" : "";
     // Route mode: the estimated arrival at the destination follows the
     // departure (connection-scan's earliest, transfer waits included), with
     // its own "was" when the arrival leg runs off-timetable
     let arrHtml = "";
     if (row.arrAbs !== undefined) {
-      const arrDelay = row.legs[row.legs.length - 1]?.delay;
-      const arrWas = arrDelay ? ` <s class="arr-was">${fmtTime(row.arrAbs - arrDelay)}</s>` : "";
+      const arrWas = wasTime(row.legs.at(-1)?.alight, "arr-was");
       const arrNext = row.arrAbs >= 1440 ? " <span class='time-nextday'>(next day)</span>" : "";
-      arrHtml = ` <span class="time-list__arr"><span class="arrow">→</span> ${fmtTime(row.arrAbs)}${arrWas}${arrNext}</span> <span class="dep-station">· ${fmtDur(row.arrAbs - row.depAbs)}</span>`;
+      arrHtml = ` <span class="time-list__arr"><span class="arrow">→</span> ${fmtTime(row.arrAbs)}${arrWas}${timeSource(row.legs.at(-1)?.alight.source)}${arrNext}</span> <span class="dep-station">· ${fmtDur(row.arrAbs - row.depAbs)}</span>`;
     }
     // Feed-only extras have no line: a dashed chip in the feed's color and
     // the destination stand in for the line identity
@@ -675,7 +697,7 @@ function renderDepartures(board) {
       : `to ${STATIONS[row.terminus] ?? row.terminus}`;
     const badge = row.fromFeed
       ? `<span class="leg-badge leg-badge_live">live</span>`
-      : delayBadge(row.delay);
+      : delayBadge(row.delay, row.source);
     // Multi-leg rows: one compact line per change of trains, so a first leg
     // that isn't itself headed to the destination still makes sense
     let transfers = "";

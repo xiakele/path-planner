@@ -25,11 +25,12 @@ origin and how far away each departure is from right now.
   clickable: a popup lists each intermediate stop with its (delay-adjusted)
   ETA, transfer waits included, and live-refreshes on every poll. Live-only
   feed trains note that no timetable backs them.
-- **Real-time delays** — trains observed running off-timetable (via the
+- **Real-time predictions** — trains observed running off-timetable (via the
   PANYNJ RidePATH feed, the same one panynj.gov uses) shift the search
   before ranking: a delayed train you can still catch stays catchable, tight
-  transfers and arrivals reflect reality, and result cards show "on time" /
-  "+5 min" badges with the timetable time struck through.
+  transfers and arrivals use the predictions at their respective stops.
+  Cards distinguish live predictions, estimates from other stops, and
+  timetable-only times, with changed timetable times struck through.
 - **Transfer connections** — up to 2 transfers with a 3-minute minimum
   connection time, e.g. Journal Square → Newport → Hoboken. Connections
   never call again at your origin station (a ride out and back is replaced
@@ -81,10 +82,13 @@ rows alike — opens a popup with every stop along the way and its ETA.
   fetch it directly), slims it down and caches it for 15 s; the browser
   polls it every 16 s (pausing in background tabs, catching up on return)
   and re-renders the results on each poll.
-- `src/realtime.js` pairs feed entries with timetable trips — same station,
-  same terminus, matching line color, nearest projected arrival within a
-  tolerance — and produces per-trip delays that `search.js` applies before
-  ranking.
+- `src/realtime.js` pairs feed entries with scheduled stops — same station,
+  same terminus, matching line color, within a tolerance. At each station,
+  `src/matching.js` maximizes the number of matches, then minimizes the sum of
+  absolute timestamp offsets across the complete assignment (not greedy
+  nearest-pair selection). Equal-cost assignments prefer chronological order.
+  Each stop keeps its own prediction; `search.js` uses those times before
+  ranking, with separate boarding, alighting, and transfer predictions.
 - `src/departures.js` builds the live departure board: the timetable's next
   ~45 minutes at the origin station, delay-adjusted by the pairing above,
   plus feed entries with no timetable counterpart as "live" extra rows;
@@ -128,20 +132,28 @@ commit the refreshed `data/schedule.json` when PATH announces new timetables.
 
 - The PANYNJ site warns trains may leave up to 3 minutes earlier or later
   than the times shown — treat tight connections accordingly.
-- Real-time caveats: the feed has no trip IDs, so trip/entry pairing is a
-  nearest-time heuristic; it only covers roughly the next 30–45 minutes
-  (later journeys show timetable times); and an observed delay is applied to
-  the train's whole run. Duplicate listings of one train are collapsed
-  before pairing, and pairings that would make a train leave more than ~3
-  minutes early are rejected outright (trains never meaningfully run early),
-  so leftover feed entries can't pose as phantom trains. When the feed is
-  unreachable or stale (> 2 min), the app silently falls back to timetable
-  times. On the departure board, a feed entry only shows as a "live" extra
-  when no timetable train matches it (same terminus, color, within the
-  pairing tolerance) — same heuristic, same limits.
-- The board's estimated arrivals are the connection scan's earliest outcome
-  (up to 2 transfers, journey capped at 2 hours); an observed delay is
-  assumed to hold along the whole run, so connecting legs inherit it.
+- Real-time caveats: the feed has no trip IDs, so even minimum-total-offset
+  assignment is a best-fit heuristic, not proof of train identity. It only
+  covers roughly the next 30–45 minutes (later journeys show timetable times).
+  Valid pairings range from 3 minutes early to 15 minutes late, with scheduled
+  stop times between 5 minutes ago and 45 minutes ahead. To reduce phantom
+  trains, duplicate listings collapse before pairing and predictions more
+  than 3 minutes early are rejected. When the feed is unreachable or stale
+  (> 2 min), the app silently falls back to timetable times.
+  The departure board reuses the exact assignments: unmatched feed
+  entries can appear as "live" extras, rather than being hidden just because
+  a timetable train happens to be nearby.
+- Missing-stop estimates interpolate offsets between matched stops using
+  scheduled travel time, or carry the nearest matched stop's offset outside
+  that range. These are labeled **est.**, not **live**; stops with no evidence
+  remain **sched.** Conflicting predictions that would move backward in time
+  favor the newer source observation, then the smaller absolute offset.
+  Forecasts are scoped to a calendar-day train occurrence, never copied to
+  another day's run. Matching and routing retain sub-minute precision;
+  displayed times and badges round to minutes.
+- The board's destination arrivals are the connection scan's earliest outcome
+  (up to 2 transfers, journey capped at 2 hours), using the arrival prediction
+  at each alighting stop and the departure prediction at each boarding stop.
 - 9 St & 23 St stations are closed nightly 12 AM–5 AM; overnight trains skip
   them, which the schedule reflects.
 - Special-event timetables (holidays, planned outages) are not parsed — only
